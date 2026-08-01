@@ -10,8 +10,19 @@ keywords = ["prism"]
 categories = ["command-line-utilities"]
 
 [dependencies]
-crossterm = "0.29.0"
-mkutils = "0.1.193"
+anyhow = "1.0.100"
+clap = { version = "4.5.53", features = ["derive"] }
+crossterm = { version = "0.29.0", features = ["event-stream", "libc", "use-dev-tty"] }
+futures = "0.3.31"
+mkutils = { version = "0.1.193", features = ["async", "tui"] }
+nix = { version = "0.30.1", features = ["fs", "process", "signal", "term"] }
+ratatui = { version = "0.30.0", features = ["crossterm"] }
+shell-words = "1.1.0"
+tempfile = "3.23.0"
+tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+unicode-segmentation = "1.12.0"
+unicode-width = "0.2.2"
+vt100 = "0.16.2"
 
 [lints.rust]
 warnings = "deny"
@@ -22,6 +33,13 @@ cargo = "deny"
 nursery = "deny"
 pedantic = "deny"
 multiple_crate_versions = { level = "allow", priority = 1 }
+missing_errors_doc = { level = "allow", priority = 1 }
+missing_panics_doc = { level = "allow", priority = 1 }
+module_name_repetitions = { level = "allow", priority = 1 }
 
+# mkutils 0.1.193's `tui` feature uses ChunkedSource from its Tree-sitter fork.
 [patch.crates-io]
-crossterm = { git = 'https://github.com/crossterm-rs/crossterm', rev = "4f08595" }
+crossterm = { git = "https://github.com/crossterm-rs/crossterm", rev = "4f08595" }
+tree-sitter = { git = "https://github.com/mkxl/tree-sitter", rev = "2f01405" }
+tree-sitter-highlight = { git = "https://github.com/mkxl/tree-sitter", rev = "2f01405" }
+tree-sitter-language = { git = "https://github.com/mkxl/tree-sitter", rev = "2f01405" }
