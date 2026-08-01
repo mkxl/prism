@@ -1,0 +1,27 @@
+[package]
+name = "prism"
+version = "0.1.0"
+edition = "2024"
+description = "prism"
+readme = "README.md"
+repository = "https://github.com/mkxl/prism.git"
+license = "Apache-2.0"
+keywords = ["prism"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+crossterm = "0.29.0"
+mkutils = "0.1.193"
+
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+all = "deny"
+cargo = "deny"
+nursery = "deny"
+pedantic = "deny"
+multiple_crate_versions = { level = "allow", priority = 1 }
+
+[patch.crates-io]
+crossterm = { git = 'https://github.com/crossterm-rs/crossterm', rev = "4f08595" }
