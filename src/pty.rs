@@ -73,7 +73,13 @@ impl RunningProcess {
                 if libc::setsid() == -1 {
                     return Err(std::io::Error::last_os_error());
                 }
-                if libc::ioctl(libc::STDOUT_FILENO, libc::TIOCSCTTY, 0) == -1 {
+
+                #[cfg(target_vendor = "apple")]
+                let tiocsctty: libc::c_ulong = libc::TIOCSCTTY.into();
+                #[cfg(not(target_vendor = "apple"))]
+                let tiocsctty = libc::TIOCSCTTY;
+
+                if libc::ioctl(libc::STDOUT_FILENO, tiocsctty, 0) == -1 {
                     return Err(std::io::Error::last_os_error());
                 }
                 Ok(())
