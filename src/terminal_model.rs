@@ -8,6 +8,7 @@ const SCROLLBACK_LINES: usize = 10_000;
 
 pub struct TerminalModel {
     parser: vt100::Parser,
+    scrollback_offset: usize,
 }
 
 impl std::fmt::Debug for TerminalModel {
@@ -16,6 +17,7 @@ impl std::fmt::Debug for TerminalModel {
             .debug_struct("TerminalModel")
             .field("size", &self.size())
             .field("scrollback", &self.parser.screen().scrollback())
+            .field("scrollback_offset", &self.scrollback_offset)
             .finish_non_exhaustive()
     }
 }
@@ -25,11 +27,18 @@ impl TerminalModel {
     pub fn new(rows: u16, columns: u16) -> Self {
         Self {
             parser: vt100::Parser::new(rows.max(1), columns.max(1), SCROLLBACK_LINES),
+            scrollback_offset: 0,
         }
     }
 
     pub fn process(&mut self, bytes: &[u8]) {
         self.parser.process(bytes);
+        let screen = self.parser.screen_mut();
+        if !screen.alternate_screen() {
+            // vt100 clears this offset when output switches screens.
+            screen.set_scrollback(screen.scrollback().max(self.scrollback_offset));
+            self.scrollback_offset = screen.scrollback();
+        }
     }
 
     pub fn resize(&mut self, rows: u16, columns: u16) {
@@ -49,14 +58,21 @@ impl TerminalModel {
     pub fn scroll_up(&mut self, count: usize) {
         let screen = self.parser.screen_mut();
         screen.set_scrollback(screen.scrollback().saturating_add(count));
+        if !screen.alternate_screen() {
+            self.scrollback_offset = screen.scrollback();
+        }
     }
 
     pub fn scroll_down(&mut self, count: usize) {
         let screen = self.parser.screen_mut();
         screen.set_scrollback(screen.scrollback().saturating_sub(count));
+        if !screen.alternate_screen() {
+            self.scrollback_offset = screen.scrollback();
+        }
     }
 
     pub fn follow(&mut self) {
+        self.scrollback_offset = 0;
         self.parser.screen_mut().set_scrollback(0);
     }
 
@@ -163,5 +179,33 @@ mod tests {
         assert!(!model.is_following());
         model.follow();
         assert!(model.is_following());
+    }
+
+    #[test]
+    fn streaming_output_preserves_a_scrolled_viewport() {
+        let mut model = TerminalModel::new(3, 10);
+        model.process(b"one\r\ntwo\r\nthree\r\nfour\r\nfive");
+        model.scroll_up(2);
+        let contents = model.contents();
+
+        model.process(b"\r\nsix\r\nseven");
+
+        assert_eq!(model.contents(), contents);
+        assert!(!model.is_following());
+    }
+
+    #[test]
+    fn temporary_alternate_screen_preserves_a_scrolled_viewport() {
+        let mut model = TerminalModel::new(3, 10);
+        model.process(b"one\r\ntwo\r\nthree\r\nfour\r\nfive");
+        model.scroll_up(2);
+        let contents = model.contents();
+
+        model.process(b"\x1b[?1049hstatus");
+        assert!(model.is_following());
+        model.process(b"\x1b[?1049l");
+
+        assert_eq!(model.contents(), contents);
+        assert!(!model.is_following());
     }
 }
