@@ -9,6 +9,7 @@ pub type ViewId = usize;
 pub struct EditorDefinition {
     pub id: EditorId,
     pub name: String,
+    pub initial_text: String,
     pub explicitly_ordered: bool,
 }
 
@@ -106,6 +107,7 @@ pub struct Configuration {
 struct DiscoveredEditor {
     name: String,
     ordering: Option<usize>,
+    initial_text: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,6 +115,7 @@ struct ParsedPlaceholder {
     name: String,
     starred: bool,
     ordering: Option<usize>,
+    initial_text: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -185,6 +188,7 @@ impl Configuration {
             .map(|(id, editor)| EditorDefinition {
                 id,
                 name: editor.name,
+                initial_text: editor.initial_text.unwrap_or_default(),
                 explicitly_ordered: editor.ordering.is_some(),
             })
             .collect::<Vec<_>>();
@@ -222,6 +226,14 @@ fn register_editor(
         if editor.ordering.is_none() {
             editor.ordering = placeholder.ordering;
         }
+        if let (Some(previous), Some(current)) = (&editor.initial_text, &placeholder.initial_text)
+            && previous != current
+        {
+            bail!("editor {:?} has conflicting defaults", placeholder.name);
+        }
+        if editor.initial_text.is_none() {
+            editor.initial_text.clone_from(&placeholder.initial_text);
+        }
         return Ok(id);
     }
 
@@ -230,6 +242,7 @@ fn register_editor(
     discovered.push(DiscoveredEditor {
         name: placeholder.name.clone(),
         ordering: placeholder.ordering,
+        initial_text: placeholder.initial_text.clone(),
     });
     Ok(id)
 }
@@ -281,7 +294,7 @@ fn parse_token(token: &str) -> Vec<RawSegment> {
             literal.push('}');
             index += 2;
         } else if remaining.starts_with('{') {
-            if let Some(close) = remaining.find('}')
+            if let Some(close) = placeholder_close(remaining)
                 && let Some(placeholder) = parse_placeholder(&remaining[1..close])
             {
                 if !literal.is_empty() {
@@ -306,8 +319,40 @@ fn parse_token(token: &str) -> Vec<RawSegment> {
     segments
 }
 
+fn placeholder_close(remaining: &str) -> Option<usize> {
+    let mut index = 1;
+    let mut in_default = false;
+    let mut fallback_close = None;
+    while index < remaining.len() {
+        let rest = &remaining[index..];
+        if !in_default && rest.starts_with('=') {
+            in_default = true;
+            index += 1;
+        } else if in_default && rest.starts_with("{{") {
+            index += 2;
+        } else if rest.starts_with('}') {
+            if in_default {
+                let braces = rest.bytes().take_while(|&byte| byte == b'}').count();
+                if braces % 2 == 1 {
+                    return Some(index + braces - 1);
+                }
+                fallback_close.get_or_insert(index);
+                index += braces;
+                continue;
+            }
+            return Some(index);
+        } else {
+            index += rest.chars().next().expect("nonempty placeholder").len_utf8();
+        }
+    }
+    fallback_close
+}
+
 fn parse_placeholder(content: &str) -> Option<ParsedPlaceholder> {
     let (starred, content) = content.strip_prefix('*').map_or((false, content), |rest| (true, rest));
+    let (content, initial_text) = content.split_once('=').map_or((content, None), |(prefix, default)| {
+        (prefix, Some(unescape_braces(default)))
+    });
     let (name, ordering) = content
         .split_once(':')
         .map_or((content, None), |(name, ordering)| (name, Some(ordering)));
@@ -323,7 +368,28 @@ fn parse_placeholder(content: &str) -> Option<ParsedPlaceholder> {
         name: name.to_owned(),
         starred,
         ordering,
+        initial_text,
     })
+}
+
+fn unescape_braces(value: &str) -> String {
+    let mut unescaped = String::with_capacity(value.len());
+    let mut index = 0;
+    while index < value.len() {
+        let remaining = &value[index..];
+        if remaining.starts_with("{{") {
+            unescaped.push('{');
+            index += 2;
+        } else if remaining.starts_with("}}") {
+            unescaped.push('}');
+            index += 2;
+        } else {
+            let character = remaining.chars().next().expect("nonempty default text");
+            unescaped.push(character);
+            index += character.len_utf8();
+        }
+    }
+    unescaped
 }
 
 fn is_valid_name(name: &str) -> bool {
@@ -343,7 +409,11 @@ mod tests {
     }
 
     fn values(configuration: &Configuration, entries: &[(&str, &str)]) -> Vec<String> {
-        let mut values = vec![String::new(); configuration.editors.len()];
+        let mut values = configuration
+            .editors
+            .iter()
+            .map(|editor| editor.initial_text.clone())
+            .collect::<Vec<_>>();
         for (name, value) in entries {
             let id = configuration
                 .editors
@@ -384,6 +454,65 @@ mod tests {
             arguments,
             ["program", "--query=hello world", "", "{foo: .foo}", "--range=1:3"]
         );
+    }
+
+    #[test]
+    fn initializes_editors_and_expands_their_defaults() {
+        let configuration = configuration(&[
+            r#"program "{query=hello world}" {punctuation:1=a:b=c} {braces={{value}}} "{*args=--name 'Jane Doe'}""#,
+        ]);
+        let initial_text = configuration
+            .editors
+            .iter()
+            .map(|editor| (editor.name.as_str(), editor.initial_text.as_str()))
+            .collect::<HashMap<_, _>>();
+        assert_eq!(initial_text["query"], "hello world");
+        assert_eq!(initial_text["punctuation"], "a:b=c");
+        assert_eq!(initial_text["braces"], "{value}");
+        assert_eq!(initial_text["args"], "--name 'Jane Doe'");
+        assert!(configuration.editors[1].explicitly_ordered);
+
+        let arguments = configuration.views[0]
+            .command
+            .expand(&values(&configuration, &[]))
+            .unwrap();
+        assert_eq!(
+            arguments,
+            ["program", "hello world", "a:b=c", "{value}", "--name", "Jane Doe"]
+        );
+    }
+
+    #[test]
+    fn merges_matching_defaults_for_shared_editors() {
+        let config = configuration(&["one {shared}", "two {*shared=seed}", "three {shared=seed}"]);
+        assert_eq!(config.editors.len(), 1);
+        assert_eq!(config.editors[0].initial_text, "seed");
+
+        let explicit_empty = configuration(&["one {shared}", "two {shared=}"]);
+        assert!(explicit_empty.editors[0].initial_text.is_empty());
+    }
+
+    #[test]
+    fn rejects_conflicting_defaults_for_shared_editors() {
+        let error =
+            Configuration::parse(&["one {shared=first}".to_owned(), "two {shared=second}".to_owned()]).unwrap_err();
+        assert!(error.to_string().contains("conflicting defaults"));
+
+        let error = Configuration::parse(&["one {shared=}".to_owned(), "two {shared=second}".to_owned()]).unwrap_err();
+        assert!(error.to_string().contains("conflicting defaults"));
+    }
+
+    #[test]
+    fn treats_separators_after_the_equals_sign_as_default_text() {
+        let configuration = configuration(&["program {value=one:2=three}"]);
+        assert_eq!(configuration.editors[0].initial_text, "one:2=three");
+        assert!(!configuration.editors[0].explicitly_ordered);
+    }
+
+    #[test]
+    fn unescapes_closing_braces_within_default_text() {
+        let configuration = configuration(&["program {value=before}}after}"]);
+        assert_eq!(configuration.editors[0].initial_text, "before}after");
     }
 
     #[test]
