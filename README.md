@@ -6,8 +6,8 @@ editors.
 
 ```sh
 producer | prism \
-  --view=input=fx \
-  --view=output='jq {*flags:1} {filter:2}'
+  input=fx \
+  output='jq {*flags:1} {filter:2}'
 ```
 
 Use `--input FILE` instead of a pipeline to read a file once. View specifications use shell-like quoting only for

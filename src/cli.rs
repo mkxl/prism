@@ -15,8 +15,8 @@ pub struct Cli {
     #[arg(long, value_name = "FILE")]
     input: Option<PathBuf>,
 
-    /// Add a command view, optionally prefixed with LABEL=.
-    #[arg(long = "view", value_name = "[LABEL=]SPEC", required = true)]
+    /// Command views, optionally prefixed with LABEL=.
+    #[arg(value_name = "[LABEL=]SPEC", required = true)]
     views: Vec<String>,
 }
 
@@ -87,6 +87,17 @@ mod tests {
 
     fn arguments(values: &[&str]) -> Vec<String> {
         values.iter().map(ToString::to_string).collect()
+    }
+
+    #[test]
+    fn accepts_views_as_positional_arguments() {
+        let cli = Cli::try_parse_from(["prism", "input=fx", "output=jq .foo"]).unwrap();
+        assert_eq!(cli.views, arguments(&["input=fx", "output=jq .foo"]));
+    }
+
+    #[test]
+    fn rejects_view_option() {
+        assert!(Cli::try_parse_from(["prism", "--view=cat"]).is_err());
     }
 
     #[test]
