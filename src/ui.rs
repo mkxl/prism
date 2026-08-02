@@ -2,7 +2,7 @@ use crate::{app::App, focus::Focus};
 use mkutils::{Orientation, PointUsize, ScrollViewState, ScrollWhen};
 use ratatui::{
     Frame,
-    layout::{Alignment, Position, Rect},
+    layout::{Alignment, Margin, Position, Rect},
     style::{Color, Modifier, Style},
     text::Line,
     widgets::{Block, Borders, Paragraph},
@@ -19,8 +19,7 @@ pub struct Areas {
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
-    let areas = calculate_areas(area, app.views.len(), &app.editor_order);
-    app.areas = areas;
+    resize(app, area);
     if app.areas.too_small {
         render_too_small(frame, area);
         return;
@@ -33,6 +32,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     for order_index in 0..app.areas.editors.len() {
         let (editor_id, area) = app.areas.editors[order_index];
         render_editor(frame, app, editor_id, area);
+    }
+}
+
+pub fn resize(app: &mut App, area: Rect) {
+    app.areas = calculate_areas(area, app.views.len(), &app.editor_order);
+    for (view, area) in app.views.iter_mut().zip(&app.areas.views) {
+        let inner = area.inner(Margin::new(1, 1));
+        view.resize(inner.height, inner.width);
     }
 }
 
@@ -103,7 +110,6 @@ fn render_view(frame: &mut Frame, app: &mut App, view_id: usize, area: Rect) {
     }
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    view.resize(inner.height, inner.width);
     let scroll_position = view.terminal.scroll_position();
     view.terminal.render(frame, inner, focused);
     if let Some((position, max_position)) = scroll_position {

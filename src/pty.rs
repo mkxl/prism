@@ -11,7 +11,10 @@ use nix::{
 use std::{
     fs::File,
     io::{ErrorKind, Read, Write},
-    os::{fd::AsRawFd, unix::process::CommandExt as _},
+    os::{
+        fd::{AsRawFd, OwnedFd},
+        unix::process::CommandExt as _,
+    },
     process::{Child, Command, ExitStatus, Stdio},
     sync::{
         Arc,
@@ -28,7 +31,7 @@ const TERMINATION_GRACE: Duration = Duration::from_millis(100);
 pub struct RunningProcess {
     child: Option<Child>,
     process_group: Pid,
-    master: File,
+    terminal: Option<File>,
     cancelled: Arc<AtomicBool>,
     input: InputStore,
     terminated: bool,
@@ -37,50 +40,54 @@ pub struct RunningProcess {
 impl RunningProcess {
     pub fn spawn(
         arguments: &[String],
-        rows: u16,
-        columns: u16,
+        size: (u16, u16),
         input: &InputStore,
         events: &UnboundedSender<AppEvent>,
         view: ViewId,
         generation: u64,
+        use_pty: bool,
     ) -> Result<Self> {
         let executable = arguments
             .first()
             .filter(|value| !value.is_empty())
             .context("empty executable")?;
-        let size = Winsize {
-            ws_row: rows.max(1),
-            ws_col: columns.max(1),
-            ws_xpixel: 0,
-            ws_ypixel: 0,
+        let ChildIo {
+            stdin_reader,
+            stdin_writer,
+            stdout,
+            stderr,
+            output_reader,
+            terminal,
+        } = if use_pty {
+            ChildIo::pty(size.0, size.1)?
+        } else {
+            ChildIo::pipes()?
         };
-        let pty = openpty(Some(&size), None).context("failed to create PTY")?;
-        let stdout_slave = dup(&pty.slave).context("failed to duplicate PTY slave")?;
-        let (stdin_reader, stdin_writer) = pipe().context("failed to create child input pipe")?;
-        for descriptor in [&pty.master, &pty.slave, &stdout_slave, &stdin_reader, &stdin_writer] {
-            fcntl(descriptor, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC)).context("failed to protect child descriptors")?;
-        }
 
         let mut command = Command::new(executable);
         command
             .args(&arguments[1..])
-            .env("TERM", "xterm-256color")
             .stdin(Stdio::from(stdin_reader))
-            .stdout(Stdio::from(stdout_slave))
-            .stderr(Stdio::from(pty.slave));
+            .stdout(Stdio::from(stdout))
+            .stderr(Stdio::from(stderr));
+        if use_pty {
+            command.env("TERM", "xterm-256color");
+        }
         unsafe {
-            command.pre_exec(|| {
+            command.pre_exec(move || {
                 if libc::setsid() == -1 {
                     return Err(std::io::Error::last_os_error());
                 }
 
-                #[cfg(target_vendor = "apple")]
-                let tiocsctty: libc::c_ulong = libc::TIOCSCTTY.into();
-                #[cfg(not(target_vendor = "apple"))]
-                let tiocsctty = libc::TIOCSCTTY;
+                if use_pty {
+                    #[cfg(target_vendor = "apple")]
+                    let tiocsctty: libc::c_ulong = libc::TIOCSCTTY.into();
+                    #[cfg(not(target_vendor = "apple"))]
+                    let tiocsctty = libc::TIOCSCTTY;
 
-                if libc::ioctl(libc::STDOUT_FILENO, tiocsctty, 0) == -1 {
-                    return Err(std::io::Error::last_os_error());
+                    if libc::ioctl(libc::STDOUT_FILENO, tiocsctty, 0) == -1 {
+                        return Err(std::io::Error::last_os_error());
+                    }
                 }
                 Ok(())
             });
@@ -95,19 +102,17 @@ impl RunningProcess {
             bail!("child PID exceeds i32");
         };
         let process_group = Pid::from_raw(raw_pid);
-        let master = File::from(pty.master);
         let cancelled = Arc::new(AtomicBool::new(false));
         let process = Self {
             child: Some(child),
             process_group,
-            master,
+            terminal,
             cancelled,
             input: input.clone(),
             terminated: false,
         };
 
-        let reader = process.master.try_clone().context("failed to clone PTY master")?;
-        spawn_pty_reader(reader, events.clone(), view, generation)?;
+        spawn_output_reader(output_reader, events.clone(), view, generation)?;
         input.spawn_pump(
             File::from(stdin_writer),
             Arc::clone(&process.cancelled),
@@ -120,7 +125,10 @@ impl RunningProcess {
     }
 
     pub fn write_input(&mut self, bytes: &[u8]) -> Result<()> {
-        match self.master.write_all(bytes) {
+        let Some(terminal) = &mut self.terminal else {
+            return Ok(());
+        };
+        match terminal.write_all(bytes) {
             Ok(()) => Ok(()),
             Err(error) if matches!(error.kind(), ErrorKind::BrokenPipe | ErrorKind::NotConnected) => Ok(()),
             Err(error) if error.raw_os_error() == Some(Errno::EIO as i32) => Ok(()),
@@ -129,13 +137,16 @@ impl RunningProcess {
     }
 
     pub fn resize(&self, rows: u16, columns: u16) -> Result<()> {
+        let Some(terminal) = &self.terminal else {
+            return Ok(());
+        };
         let size = Winsize {
             ws_row: rows.max(1),
             ws_col: columns.max(1),
             ws_xpixel: 0,
             ws_ypixel: 0,
         };
-        let result = unsafe { libc::ioctl(self.master.as_raw_fd(), libc::TIOCSWINSZ, &size) };
+        let result = unsafe { libc::ioctl(terminal.as_raw_fd(), libc::TIOCSWINSZ, &size) };
         if result == -1 {
             bail!(std::io::Error::last_os_error());
         }
@@ -181,6 +192,63 @@ impl RunningProcess {
     }
 }
 
+struct ChildIo {
+    stdin_reader: OwnedFd,
+    stdin_writer: OwnedFd,
+    stdout: OwnedFd,
+    stderr: OwnedFd,
+    output_reader: File,
+    terminal: Option<File>,
+}
+
+impl ChildIo {
+    fn pty(rows: u16, columns: u16) -> Result<Self> {
+        let size = Winsize {
+            ws_row: rows.max(1),
+            ws_col: columns.max(1),
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
+        let pty = openpty(Some(&size), None).context("failed to create PTY")?;
+        let stdout = dup(&pty.slave).context("failed to duplicate PTY slave")?;
+        let (stdin_reader, stdin_writer) = pipe().context("failed to create child input pipe")?;
+        protect_descriptors([&pty.master, &pty.slave, &stdout, &stdin_reader, &stdin_writer])?;
+
+        let terminal = File::from(pty.master);
+        let output_reader = terminal.try_clone().context("failed to clone PTY master")?;
+        Ok(Self {
+            stdin_reader,
+            stdin_writer,
+            stdout,
+            stderr: pty.slave,
+            output_reader,
+            terminal: Some(terminal),
+        })
+    }
+
+    fn pipes() -> Result<Self> {
+        let (output_reader, stdout) = pipe().context("failed to create child output pipe")?;
+        let stderr = dup(&stdout).context("failed to duplicate child output pipe")?;
+        let (stdin_reader, stdin_writer) = pipe().context("failed to create child input pipe")?;
+        protect_descriptors([&output_reader, &stdout, &stderr, &stdin_reader, &stdin_writer])?;
+        Ok(Self {
+            stdin_reader,
+            stdin_writer,
+            stdout,
+            stderr,
+            output_reader: File::from(output_reader),
+            terminal: None,
+        })
+    }
+}
+
+fn protect_descriptors<const N: usize>(descriptors: [&OwnedFd; N]) -> Result<()> {
+    for descriptor in descriptors {
+        fcntl(descriptor, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC)).context("failed to protect child descriptors")?;
+    }
+    Ok(())
+}
+
 impl Drop for RunningProcess {
     fn drop(&mut self) {
         self.terminate();
@@ -195,9 +263,14 @@ fn signal_group(process_group: Pid, signal: Signal) {
     }
 }
 
-fn spawn_pty_reader(mut reader: File, events: UnboundedSender<AppEvent>, view: ViewId, generation: u64) -> Result<()> {
+fn spawn_output_reader(
+    mut reader: File,
+    events: UnboundedSender<AppEvent>,
+    view: ViewId,
+    generation: u64,
+) -> Result<()> {
     thread::Builder::new()
-        .name(format!("prism-pty-reader-{view}-{generation}"))
+        .name(format!("prism-output-reader-{view}-{generation}"))
         .spawn(move || {
             let mut buffer = vec![0; 64 * 1024];
             loop {
@@ -221,14 +294,14 @@ fn spawn_pty_reader(mut reader: File, events: UnboundedSender<AppEvent>, view: V
                         let _ = events.send(AppEvent::WorkerFailed {
                             view: Some(view),
                             generation: Some(generation),
-                            error: anyhow!(error).context("PTY output reader failed").to_string(),
+                            error: anyhow!(error).context("child output reader failed").to_string(),
                         });
                         return;
                     }
                 }
             }
         })
-        .context("failed to start PTY output reader")?;
+        .context("failed to start child output reader")?;
     Ok(())
 }
 
@@ -290,7 +363,7 @@ mod tests {
             "wc -c | tr -d ' ' | sed 's/^/input=/'"
         );
         let arguments = vec!["/bin/sh".to_owned(), "-c".to_owned(), script.to_owned()];
-        let mut process = RunningProcess::spawn(&arguments, 20, 80, &input, &events, 0, 1).unwrap();
+        let mut process = RunningProcess::spawn(&arguments, (20, 80), &input, &events, 0, 1, true).unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
         let mut output = Vec::new();
         let mut exited = false;
@@ -315,6 +388,41 @@ mod tests {
     }
 
     #[test]
+    fn child_without_pty_uses_merged_output_pipe() {
+        let (events, mut receiver) = mpsc::unbounded_channel();
+        let input = InputStore::start(Box::new(std::io::Cursor::new(b"abc".to_vec())), events.clone()).unwrap();
+        let script = concat!(
+            "if [ -t 0 ]; then echo stdin=tty; else echo stdin=pipe; fi; ",
+            "if [ -t 1 ]; then echo stdout=tty; else echo stdout=pipe; fi; ",
+            "if [ -t 2 ]; then echo stderr=tty >&2; else echo stderr=pipe >&2; fi; ",
+            "if (: </dev/tty) 2>/dev/null; then echo devtty=yes; else echo devtty=no; fi; ",
+            "wc -c | tr -d ' ' | sed 's/^/input=/'"
+        );
+        let arguments = vec!["/bin/sh".to_owned(), "-c".to_owned(), script.to_owned()];
+        let mut process = RunningProcess::spawn(&arguments, (20, 80), &input, &events, 0, 1, false).unwrap();
+        process.resize(13, 47).unwrap();
+        process.write_input(b"ignored").unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut output = Vec::new();
+        while Instant::now() < deadline {
+            drain_output(&mut receiver, &mut output);
+            if process.poll_exit().unwrap().is_some() {
+                thread::sleep(Duration::from_millis(20));
+                drain_output(&mut receiver, &mut output);
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        let output = String::from_utf8_lossy(&output);
+        assert!(output.contains("stdin=pipe"), "{output:?}");
+        assert!(output.contains("stdout=pipe"), "{output:?}");
+        assert!(output.contains("stderr=pipe"), "{output:?}");
+        assert!(output.contains("devtty=no"), "{output:?}");
+        assert!(output.contains("input=3"), "{output:?}");
+    }
+
+    #[test]
     fn interactive_keys_and_resize_reach_controlling_terminal() {
         let (events, mut receiver) = mpsc::unbounded_channel();
         let input = InputStore::start(Box::new(std::io::Cursor::new(Vec::<u8>::new())), events.clone()).unwrap();
@@ -325,7 +433,7 @@ mod tests {
             "stty size </dev/tty; echo key=$key"
         );
         let arguments = vec!["/bin/sh".to_owned(), "-c".to_owned(), script.to_owned()];
-        let mut process = RunningProcess::spawn(&arguments, 20, 80, &input, &events, 0, 1).unwrap();
+        let mut process = RunningProcess::spawn(&arguments, (20, 80), &input, &events, 0, 1, true).unwrap();
         let mut output = Vec::new();
         wait_for_text(&mut receiver, &mut output, "interactive-ready");
         process.resize(13, 47).unwrap();
@@ -344,7 +452,7 @@ mod tests {
             "-c".to_owned(),
             "sleep 30 & echo descendant=$!; wait".to_owned(),
         ];
-        let mut process = RunningProcess::spawn(&arguments, 20, 80, &input, &events, 0, 1).unwrap();
+        let mut process = RunningProcess::spawn(&arguments, (20, 80), &input, &events, 0, 1, true).unwrap();
         let mut output = Vec::new();
         wait_for_text(&mut receiver, &mut output, "descendant=");
         let output = String::from_utf8_lossy(&output);
