@@ -82,6 +82,17 @@ impl TerminalModel {
     }
 
     #[must_use]
+    pub fn scroll_position(&mut self) -> Option<(usize, usize)> {
+        let screen = self.parser.screen_mut();
+        let scrollback = screen.scrollback();
+        screen.set_scrollback(usize::MAX);
+        let max_scrollback = screen.scrollback();
+        screen.set_scrollback(scrollback);
+
+        (max_scrollback > 0).then(|| (max_scrollback.saturating_sub(scrollback), max_scrollback))
+    }
+
+    #[must_use]
     pub fn application_cursor(&self) -> bool {
         self.parser.screen().application_cursor()
     }
@@ -179,6 +190,29 @@ mod tests {
         assert!(!model.is_following());
         model.follow();
         assert!(model.is_following());
+    }
+
+    #[test]
+    fn reports_top_relative_scroll_position() {
+        let mut model = TerminalModel::new(2, 10);
+        model.process(b"one\r\ntwo\r\nthree\r\nfour");
+
+        let (_, max_position) = model.scroll_position().unwrap();
+        assert_eq!(model.scroll_position(), Some((max_position, max_position)));
+
+        model.scroll_up(1);
+        assert_eq!(model.scroll_position(), Some((max_position - 1, max_position)));
+
+        model.scroll_up(usize::MAX);
+        assert_eq!(model.scroll_position(), Some((0, max_position)));
+    }
+
+    #[test]
+    fn omits_scroll_position_without_history() {
+        let mut model = TerminalModel::new(2, 10);
+        model.process(b"one\r\ntwo");
+
+        assert_eq!(model.scroll_position(), None);
     }
 
     #[test]

@@ -1,4 +1,5 @@
 use crate::{app::App, focus::Focus};
+use mkutils::{Orientation, PointUsize, ScrollViewState, ScrollWhen};
 use ratatui::{
     Frame,
     layout::{Alignment, Position, Rect},
@@ -103,7 +104,25 @@ fn render_view(frame: &mut Frame, app: &mut App, view_id: usize, area: Rect) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
     view.resize(inner.height, inner.width);
+    let scroll_position = view.terminal.scroll_position();
     view.terminal.render(frame, inner, focused);
+    if let Some((position, max_position)) = scroll_position {
+        render_view_scrollbar(frame, inner, position, max_position, focused);
+    }
+}
+
+fn render_view_scrollbar(frame: &mut Frame, area: Rect, position: usize, max_position: usize, focused: bool) {
+    let mut state = ScrollViewState::new(ScrollWhen::ForLargeContent, None);
+    state.set_latest_content_size(PointUsize::new(
+        usize::from(area.width),
+        max_position.saturating_add(usize::from(area.height)),
+    ));
+    state.set_latest_scroll_view_area_size(area.as_size().into());
+    state.scroll_down(position);
+    let style = Style::new().fg(if focused { Color::Cyan } else { Color::DarkGray });
+    state
+        .scroll_bar(Orientation::Vertical, style)
+        .render(area, frame.buffer_mut());
 }
 
 fn render_editor(frame: &mut Frame, app: &mut App, editor_id: usize, area: Rect) {
