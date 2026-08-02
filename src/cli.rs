@@ -6,6 +6,7 @@ use std::{
     fs::File,
     io::{IsTerminal, Read},
     path::PathBuf,
+    str::FromStr,
 };
 
 #[derive(Debug, Parser)]
@@ -15,7 +16,11 @@ pub struct Cli {
     #[arg(long, value_name = "FILE")]
     input: Option<PathBuf>,
 
-    /// Command views, optionally prefixed with LABEL=. Editors use {[*]NAME[:INDEX][=DEFAULT]}.
+    /// Lock child TTYs at their initial view size or at a fixed size.
+    #[arg(long, value_name = "COLUMNSxROWS", num_args = 0..=1, require_equals = true, default_missing_value = "initial")]
+    lock_tty_size: Option<TtySizeLock>,
+
+    /// Command views, optionally prefixed with LABEL=. Start with [no-tty] to use output pipes.
     #[arg(value_name = "[LABEL=]SPEC", required = true)]
     views: Vec<String>,
 }
@@ -24,7 +29,7 @@ impl Cli {
     pub async fn run(self) -> Result<crate::app::RunOutcome> {
         let configuration = Configuration::parse(&self.views)?;
         let source = self.open_input()?;
-        App::new(configuration, source)?.run().await
+        App::new(configuration, source, self.lock_tty_size)?.run().await
     }
 
     fn open_input(&self) -> Result<Box<dyn Read + Send>> {
@@ -39,6 +44,38 @@ impl Cli {
 
         Ok(Box::new(std::io::stdin()))
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TtySizeLock {
+    Initial,
+    Fixed { columns: u16, rows: u16 },
+}
+
+impl FromStr for TtySizeLock {
+    type Err = String;
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        if value == "initial" {
+            return Ok(Self::Initial);
+        }
+        let (columns, rows) = value
+            .split_once('x')
+            .ok_or_else(|| "TTY size must have the form COLUMNSxROWS".to_owned())?;
+        let columns = parse_dimension(columns, "columns")?;
+        let rows = parse_dimension(rows, "rows")?;
+        Ok(Self::Fixed { columns, rows })
+    }
+}
+
+fn parse_dimension(value: &str, name: &str) -> std::result::Result<u16, String> {
+    let dimension = value
+        .parse::<u16>()
+        .map_err(|_| format!("TTY {name} must be an integer from 1 to {}", u16::MAX))?;
+    if dimension == 0 {
+        return Err(format!("TTY {name} must be at least 1"));
+    }
+    Ok(dimension)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,6 +135,23 @@ mod tests {
     #[test]
     fn rejects_view_option() {
         assert!(Cli::try_parse_from(["prism", "--view=cat"]).is_err());
+    }
+
+    #[test]
+    fn parses_tty_size_locks_without_consuming_views() {
+        let initial = Cli::try_parse_from(["prism", "--lock-tty-size", "cat"]).unwrap();
+        assert_eq!(initial.lock_tty_size, Some(TtySizeLock::Initial));
+        assert_eq!(initial.views, arguments(&["cat"]));
+
+        let fixed = Cli::try_parse_from(["prism", "--lock-tty-size=80x24", "cat"]).unwrap();
+        assert_eq!(fixed.lock_tty_size, Some(TtySizeLock::Fixed { columns: 80, rows: 24 }));
+    }
+
+    #[test]
+    fn rejects_invalid_tty_sizes() {
+        for size in ["80", "80X24", "0x24", "80x0", "65536x24"] {
+            assert!(Cli::try_parse_from(["prism", &format!("--lock-tty-size={size}"), "cat"]).is_err());
+        }
     }
 
     #[test]

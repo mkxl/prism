@@ -1,6 +1,6 @@
 use crate::cli::parse_view_arguments;
 use anyhow::{Context, Result, bail};
-use std::collections::HashMap;
+use std::{collections::HashMap, path::Path};
 
 pub type EditorId = usize;
 pub type ViewId = usize;
@@ -93,6 +93,7 @@ pub struct ViewDefinition {
     pub label: String,
     pub command: CommandTemplate,
     pub referenced_editors: Vec<EditorId>,
+    pub use_pty: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -132,11 +133,26 @@ impl Configuration {
         let mut views = Vec::with_capacity(view_arguments.len());
 
         for (view_id, view_argument) in view_arguments.into_iter().enumerate() {
-            let words = shell_words::split(&view_argument.spec)
+            let mut words = shell_words::split(&view_argument.spec)
                 .with_context(|| format!("invalid view specification for {:?}", view_argument.label))?;
+            let use_pty = if words.first().is_some_and(|word| word == "[no-tty]") {
+                words.remove(0);
+                false
+            } else {
+                true
+            };
             if words.is_empty() {
                 bail!("view {:?} has an empty specification", view_argument.label);
             }
+            let label = if view_argument.explicit_label {
+                view_argument.label
+            } else {
+                Path::new(&words[0])
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or(&words[0])
+                    .to_owned()
+            };
 
             let mut referenced_editors = Vec::new();
             let mut command_tokens = Vec::with_capacity(words.len());
@@ -162,10 +178,7 @@ impl Configuration {
 
                 if let Some(editor) = starred_editor {
                     if segments.len() != 1 || !matches!(segments[0], Segment::Placeholder(_)) {
-                        bail!(
-                            "starred placeholder in view {:?} must occupy an entire token",
-                            view_argument.label
-                        );
+                        bail!("starred placeholder in view {label:?} must occupy an entire token");
                     }
                     command_tokens.push(TokenTemplate::Starred(editor));
                 } else {
@@ -175,9 +188,10 @@ impl Configuration {
 
             views.push(ViewDefinition {
                 id: view_id,
-                label: view_argument.label,
+                label,
                 command: CommandTemplate { tokens: command_tokens },
                 referenced_editors,
+                use_pty,
             });
         }
 
@@ -431,6 +445,27 @@ mod tests {
         let configuration = configuration(&[r#"program "one two" 'three' |"#]);
         let arguments = configuration.views[0].command.expand(&[]).unwrap();
         assert_eq!(arguments, ["program", "one two", "three", "|"]);
+    }
+
+    #[test]
+    fn uses_command_name_for_implicit_view_labels() {
+        let configuration = configuration(&["[no-tty] /usr/bin/program argument", "custom=other argument"]);
+        assert_eq!(configuration.views[0].label, "program");
+        assert_eq!(configuration.views[1].label, "custom");
+    }
+
+    #[test]
+    fn configures_no_tty_per_view() {
+        let configuration = configuration(&["terminal=one argument", "piped=[no-tty] two argument"]);
+        assert!(configuration.views[0].use_pty);
+        assert!(!configuration.views[1].use_pty);
+        assert_eq!(configuration.views[1].command.expand(&[]).unwrap(), ["two", "argument"]);
+    }
+
+    #[test]
+    fn rejects_no_tty_marker_without_a_command() {
+        let error = Configuration::parse(&["[no-tty]".to_owned()]).unwrap_err();
+        assert!(error.to_string().contains("empty specification"));
     }
 
     #[test]

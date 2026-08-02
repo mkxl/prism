@@ -1,4 +1,4 @@
-use crate::{pty::RunningProcess, template::ViewDefinition, terminal_model::TerminalModel};
+use crate::{cli::TtySizeLock, pty::RunningProcess, template::ViewDefinition, terminal_model::TerminalModel};
 use std::{os::unix::process::ExitStatusExt as _, process::ExitStatus};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,17 +16,20 @@ pub struct View {
     pub state: RunState,
     pub terminal: TerminalModel,
     pub process: Option<RunningProcess>,
+    tty_size_lock: Option<TtySizeLock>,
 }
 
 impl View {
     #[must_use]
-    pub fn new(definition: ViewDefinition) -> Self {
+    pub fn new(definition: ViewDefinition, tty_size_lock: Option<TtySizeLock>) -> Self {
+        let tty_size_lock = if definition.use_pty { tty_size_lock } else { None };
         Self {
             definition,
             generation: 0,
             state: RunState::Starting,
             terminal: TerminalModel::new(1, 1),
             process: None,
+            tty_size_lock,
         }
     }
 
@@ -43,7 +46,18 @@ impl View {
     }
 
     pub fn resize(&mut self, rows: u16, columns: u16) {
-        let size = (rows.max(1), columns.max(1));
+        let requested = (rows.max(1), columns.max(1));
+        let size = match self.tty_size_lock {
+            None => requested,
+            Some(TtySizeLock::Initial) => {
+                self.tty_size_lock = Some(TtySizeLock::Fixed {
+                    columns: requested.1,
+                    rows: requested.0,
+                });
+                requested
+            }
+            Some(TtySizeLock::Fixed { columns, rows }) => (rows, columns),
+        };
         if self.terminal.size() == size {
             return;
         }
