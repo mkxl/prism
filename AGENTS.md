@@ -36,6 +36,7 @@ Supported platforms are Linux and macOS. Windows is intentionally unsupported.
 - `{*name}` must occupy a complete token and is lexically split at runtime.
 - `{{` and `}}` escape literal braces after view-spec tokenization.
 - Editors are shared by name. `:<n>` claims a 1-based absolute editor display position.
+- `=text` after the optional position initializes an editor. Repeated explicit defaults for one name must match.
 - Repeated names may mix starred and unstarred uses because starring is usage-specific.
 - Empty unstarred placeholders produce one empty argument; empty starred placeholders produce zero arguments.
 

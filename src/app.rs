@@ -60,7 +60,7 @@ impl App {
         let editors = configuration
             .editors
             .into_iter()
-            .map(|definition| Editor::new(definition.name))
+            .map(|definition| Editor::new(definition.name, &definition.initial_text))
             .collect();
         Ok(Self {
             input,
@@ -519,6 +519,14 @@ mod tests {
         app.schedule_editor_restart(0, first + Duration::from_millis(50));
         assert!(app.pending_restarts[&0] > original);
         assert!(!app.pending_restarts.contains_key(&1));
+    }
+
+    #[test]
+    fn initializes_prompt_editors_with_configured_text() {
+        let configuration = Configuration::parse(&[r#"command "{query=hello world}""#.to_owned()]).unwrap();
+        let app = App::new(configuration, Box::new(std::io::Cursor::new(Vec::<u8>::new()))).unwrap();
+        assert_eq!(app.editors[0].text, "hello world");
+        assert_eq!(app.editors[0].cursor, "hello world".len());
     }
 
     #[test]

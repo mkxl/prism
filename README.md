@@ -7,12 +7,16 @@ editors.
 ```sh
 producer | prism \
   input=fx \
-  output='jq {*flags:1} {filter:2}'
+  output='jq {*flags:1=--compact-output} {filter:2=.items[]}'
 ```
 
 Use `--input FILE` instead of a pipeline to read a file once. View specifications use shell-like quoting only for
 lexical splitting; commands are executed directly without an implicit shell. `{name}` substitutes one argument value,
-while a standalone `{*name}` splits the editor value into zero or more arguments.
+while a standalone `{*name}` splits the editor value into zero or more arguments. Add initial editor text with
+`{name=default}` or `{name:2=default}`; the optional `:2` sets the editor's display position. Keep a placeholder quoted
+within the view specification when its default contains spaces, for example `output='jq "{query=.items | length}"'`.
+Shared occurrences of an editor may omit the default or repeat the same one, but conflicting defaults are rejected. Use
+`{{` and `}}` for literal braces.
 
 | Key | Action |
 | --- | --- |

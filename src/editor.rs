@@ -13,11 +13,13 @@ pub struct Editor {
 
 impl Editor {
     #[must_use]
-    pub const fn new(name: String) -> Self {
+    pub fn new(name: String, text: &str) -> Self {
+        let text = normalize_text(text);
+        let cursor = text.len();
         Self {
             name,
-            text: String::new(),
-            cursor: 0,
+            text,
+            cursor,
             horizontal_offset: 0,
             validation_error: None,
         }
@@ -49,7 +51,7 @@ impl Editor {
     }
 
     pub fn paste(&mut self, pasted: &str) -> bool {
-        let normalized = normalize_paste(pasted);
+        let normalized = normalize_text(pasted);
         if normalized.is_empty() {
             return false;
         }
@@ -121,9 +123,9 @@ fn next_boundary(text: &str, cursor: usize) -> usize {
         .map_or(text.len(), |(index, _)| cursor + index)
 }
 
-fn normalize_paste(pasted: &str) -> String {
-    let mut normalized = String::with_capacity(pasted.len());
-    let mut characters = pasted.chars().peekable();
+fn normalize_text(text: &str) -> String {
+    let mut normalized = String::with_capacity(text.len());
+    let mut characters = text.chars().peekable();
     while let Some(character) = characters.next() {
         match character {
             '\r' => {
@@ -146,7 +148,7 @@ mod tests {
 
     #[test]
     fn edits_by_grapheme() {
-        let mut editor = Editor::new("test".to_owned());
+        let mut editor = Editor::new("test".to_owned(), "");
         editor.paste("a\u{301}b");
         editor.input(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
         editor.input(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
@@ -155,8 +157,15 @@ mod tests {
 
     #[test]
     fn normalizes_pasted_lines() {
-        let mut editor = Editor::new("test".to_owned());
+        let mut editor = Editor::new("test".to_owned(), "");
         assert!(editor.paste("one\r\ntwo\nthree"));
         assert_eq!(editor.text, "one two three");
+    }
+
+    #[test]
+    fn starts_with_the_cursor_after_initial_text() {
+        let editor = Editor::new("test".to_owned(), "one\r\ntwo\u{7}");
+        assert_eq!(editor.text, "one two");
+        assert_eq!(editor.cursor, editor.text.len());
     }
 }

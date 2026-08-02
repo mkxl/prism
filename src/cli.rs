@@ -15,7 +15,7 @@ pub struct Cli {
     #[arg(long, value_name = "FILE")]
     input: Option<PathBuf>,
 
-    /// Command views, optionally prefixed with LABEL=.
+    /// Command views, optionally prefixed with LABEL=. Editors use {[*]NAME[:INDEX][=DEFAULT]}.
     #[arg(value_name = "[LABEL=]SPEC", required = true)]
     views: Vec<String>,
 }
