@@ -237,6 +237,19 @@ impl App {
 
     fn handle_mouse(&mut self, mouse: MouseEvent) {
         let position = ui::position(mouse.column, mouse.row);
+        if matches!(mouse.kind, MouseEventKind::Moved) {
+            if let Some((view, _)) = self
+                .areas
+                .views
+                .iter()
+                .enumerate()
+                .find(|(_, area)| area.contains(position))
+            {
+                self.focus = Focus::View(view);
+            }
+            return;
+        }
+
         if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
             if let Some((view, _)) = self
                 .areas
