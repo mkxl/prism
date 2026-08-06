@@ -49,8 +49,10 @@ option does not lock pipe-backed views.
 | `Tab` / `Shift+Tab` | Move focus |
 | `Ctrl+]` | Leave a focused view |
 | `Ctrl+R` | Restart the focused view or editor's views |
+| `Ctrl+G` | Toggle the input-event debug bar |
 | `End` | Follow live output in the focused view |
 | `Ctrl+Q` | Quit |
 
 While a PTY-backed view is focused, other keys, including `Ctrl+C`, are sent to its controlling terminal. Mouse events
-remain local to prism.
+remain local to prism. The optional one-line debug bar appears at the bottom and reports the most recently detected
+Crossterm key or mouse event, including its modifiers, event kind, coordinates, and state where applicable.

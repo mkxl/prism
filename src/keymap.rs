@@ -9,6 +9,7 @@ pub enum Action {
     LeaveView,
     Restart,
     FollowView,
+    ToggleDebug,
 }
 
 #[must_use]
@@ -24,6 +25,7 @@ pub fn default_keymap() -> KeyMapSession<Action> {
         binding(KeyCode::Char(']'), KeyModifiers::CONTROL, Action::LeaveView),
         binding(KeyCode::Char('r'), KeyModifiers::CONTROL, Action::Restart),
         binding(KeyCode::End, KeyModifiers::NONE, Action::FollowView),
+        binding(KeyCode::Char('g'), KeyModifiers::CONTROL, Action::ToggleDebug),
     ])
     .into()
 }
@@ -56,6 +58,10 @@ mod tests {
                 Action::Restart,
             ),
             (KeyEvent::new(KeyCode::End, KeyModifiers::NONE), Action::FollowView),
+            (
+                KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL),
+                Action::ToggleDebug,
+            ),
         ];
         for (key, action) in cases {
             assert_eq!(keymap.on_key_event(key), Some(&action));

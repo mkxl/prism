@@ -73,9 +73,9 @@ Supported platforms are Linux and macOS. Windows is intentionally unsupported.
 - `src/keymap.rs`: all application-level shortcuts through `mkutils::KeyMapSession`.
 - `src/focus.rs`: traversal across views and editors.
 - `src/app.rs`: Tokio event loop, resize-event propagation, debounce, restarts, signals, input routing, and generation
-  filtering.
-- `src/ui.rs`: equal-width layout and resize calculation, editor blocks, focus styling, mouse areas, and too-small
-  fallback.
+  filtering. It also retains the latest key or mouse event for the optional debug display.
+- `src/ui.rs`: equal-width layout and resize calculation, editor blocks, focus styling, mouse areas, optional bottom
+  debug bar, and too-small fallback.
 - `src/terminal.rs`: `/dev/tty` Ratatui backend and RAII restoration.
 - `src/event.rs`: immutable worker-to-app messages.
 
@@ -92,6 +92,7 @@ with a direct monolithic match over Crossterm key events.
 - `Ctrl+]`: leave a view for one of its editors
 - `Ctrl+Q`: orderly quit
 - `Ctrl+R`: immediate manual restart
+- `Ctrl+G`: toggle the bottom input-event debug bar
 - `End`: return a focused view to live-follow mode; it remains an editor movement key when an editor is focused
 
 Unmatched keys in a PTY-backed view, including `Ctrl+C`, are encoded and written to the PTY master. A `[no-tty]` view

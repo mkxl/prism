@@ -1,4 +1,7 @@
-use crate::{app::App, focus::Focus};
+use crate::{
+    app::{App, DebugEvent},
+    focus::Focus,
+};
 use mkutils::{Orientation, PointUsize, ScrollViewState, ScrollWhen};
 use ratatui::{
     Frame,
@@ -14,6 +17,7 @@ const EDITOR_HEIGHT: u16 = 3;
 pub struct Areas {
     pub views: Vec<Rect>,
     pub editors: Vec<(usize, Rect)>,
+    pub debug_bar: Option<Rect>,
     pub too_small: bool,
 }
 
@@ -22,36 +26,41 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     resize(app, area);
     if app.areas.too_small {
         render_too_small(frame, area);
-        return;
+    } else {
+        for view_id in 0..app.views.len() {
+            let area = app.areas.views[view_id];
+            render_view(frame, app, view_id, area);
+        }
+        for order_index in 0..app.areas.editors.len() {
+            let (editor_id, area) = app.areas.editors[order_index];
+            render_editor(frame, app, editor_id, area);
+        }
     }
-
-    for view_id in 0..app.views.len() {
-        let area = app.areas.views[view_id];
-        render_view(frame, app, view_id, area);
-    }
-    for order_index in 0..app.areas.editors.len() {
-        let (editor_id, area) = app.areas.editors[order_index];
-        render_editor(frame, app, editor_id, area);
+    if let Some(area) = app.areas.debug_bar {
+        render_debug_bar(frame, app.debug_event, area);
     }
 }
 
 pub fn resize(app: &mut App, area: Rect) {
-    app.areas = calculate_areas(area, app.views.len(), &app.editor_order);
+    app.areas = calculate_areas(area, app.views.len(), &app.editor_order, app.debug_mode);
     for (view, area) in app.views.iter_mut().zip(&app.areas.views) {
         let inner = area.inner(Margin::new(1, 1));
         view.resize(inner.height, inner.width);
     }
 }
 
-fn calculate_areas(area: Rect, view_count: usize, editor_order: &[usize]) -> Areas {
+fn calculate_areas(area: Rect, view_count: usize, editor_order: &[usize], debug_mode: bool) -> Areas {
+    let debug_height = u16::from(debug_mode && area.height > 0);
+    let debug_bar = (debug_height > 0).then(|| Rect::new(area.x, area.bottom() - 1, area.width, 1));
     let editor_rows = u16::try_from(editor_order.len())
         .unwrap_or(u16::MAX)
         .saturating_mul(EDITOR_HEIGHT);
-    let view_height = area.height.saturating_sub(editor_rows);
+    let view_height = area.height.saturating_sub(debug_height).saturating_sub(editor_rows);
     let view_count_u16 = u16::try_from(view_count).unwrap_or(u16::MAX).max(1);
     let too_small = view_height < 3 || area.width < view_count_u16.saturating_mul(3);
     if too_small {
         return Areas {
+            debug_bar,
             too_small: true,
             ..Areas::default()
         };
@@ -78,8 +87,21 @@ fn calculate_areas(area: Rect, view_count: usize, editor_order: &[usize]) -> Are
     Areas {
         views,
         editors,
+        debug_bar,
         too_small: false,
     }
+}
+
+fn render_debug_bar(frame: &mut Frame, event: Option<DebugEvent>, area: Rect) {
+    let event = match event {
+        Some(DebugEvent::Key(event)) => format!("{event:?}"),
+        Some(DebugEvent::Mouse(event)) => format!("{event:?}"),
+        None => "waiting for a key or mouse event".to_owned(),
+    };
+    frame.render_widget(
+        Paragraph::new(format!(" DEBUG | {event}")).style(Style::new().fg(Color::White).bg(Color::DarkGray)),
+        area,
+    );
 }
 
 fn render_too_small(frame: &mut Frame, area: Rect) {
@@ -167,13 +189,20 @@ mod tests {
 
     #[test]
     fn distributes_view_remainder_left_to_right() {
-        let areas = calculate_areas(Rect::new(0, 0, 11, 8), 3, &[]);
+        let areas = calculate_areas(Rect::new(0, 0, 11, 8), 3, &[], false);
         assert_eq!(areas.views.iter().map(|area| area.width).collect::<Vec<_>>(), [4, 4, 3]);
     }
 
     #[test]
     fn reserves_three_rows_per_editor_and_recovers() {
-        assert!(calculate_areas(Rect::new(0, 0, 10, 8), 1, &[0, 1]).too_small);
-        assert!(!calculate_areas(Rect::new(0, 0, 10, 9), 1, &[0, 1]).too_small);
+        assert!(calculate_areas(Rect::new(0, 0, 10, 8), 1, &[0, 1], false).too_small);
+        assert!(!calculate_areas(Rect::new(0, 0, 10, 9), 1, &[0, 1], false).too_small);
+    }
+
+    #[test]
+    fn reserves_debug_bar_at_bottom() {
+        let areas = calculate_areas(Rect::new(2, 3, 10, 8), 1, &[], true);
+        assert_eq!(areas.views, [Rect::new(2, 3, 10, 7)]);
+        assert_eq!(areas.debug_bar, Some(Rect::new(2, 10, 10, 1)));
     }
 }
