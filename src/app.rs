@@ -287,64 +287,58 @@ impl App {
             return Ok(());
         }
 
-        if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
-            if let Some((view, _)) = self
-                .areas
-                .views
-                .iter()
-                .enumerate()
-                .find(|(_, area)| area.contains(position))
-            {
+        if let Some(view) = self.areas.views.iter().position(|area| area.contains(position)) {
+            let is_wheel = matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown);
+            if matches!(mouse.kind, MouseEventKind::Down(_)) || is_wheel {
                 self.focus = Focus::View(view);
+            }
+            if self.forward_mouse_to_view(view, mouse)? {
                 return Ok(());
             }
-            if let Some(&(editor, area)) = self.areas.editors.iter().find(|(_, area)| area.contains(position)) {
-                self.focus = Focus::Editor(editor);
-                let inner = area.inner(ratatui::layout::Margin::new(1, 1));
-                if inner.contains(position) {
-                    self.editors[editor].place_cursor(mouse.column.saturating_sub(inner.x));
-                }
+            if matches!(mouse.kind, MouseEventKind::ScrollUp) {
+                self.views[view].terminal.scroll_up(3);
+            } else if matches!(mouse.kind, MouseEventKind::ScrollDown) {
+                self.views[view].terminal.scroll_down(3);
             }
             return Ok(());
         }
 
-        let scroll = match mouse.kind {
-            MouseEventKind::ScrollUp => Some(true),
-            MouseEventKind::ScrollDown => Some(false),
-            _ => None,
-        };
-        let Some(up) = scroll else { return Ok(()) };
-        if let Some((view, area)) = self
-            .areas
-            .views
-            .iter()
-            .enumerate()
-            .find(|(_, area)| area.contains(position))
+        if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+            && let Some(&(editor, area)) = self.areas.editors.iter().find(|(_, area)| area.contains(position))
         {
-            self.focus = Focus::View(view);
+            self.focus = Focus::Editor(editor);
             let inner = area.inner(Margin::new(1, 1));
-            let local_column = mouse.column.checked_sub(inner.x);
-            let local_row = mouse.row.checked_sub(inner.y);
-            let child_input = local_column.zip(local_row).and_then(|(column, row)| {
-                let terminal = &self.views[view].terminal;
-                let (rows, columns) = terminal.size();
-                (self.views[view].definition.use_pty && inner.contains(position) && row < rows && column < columns)
-                    .then(|| encode_wheel(mouse, row, column, terminal))
-                    .flatten()
-            });
-            if let Some(bytes) = child_input
-                && let Some(process) = &mut self.views[view].process
-            {
-                process.write_input(&bytes)?;
-                return Ok(());
-            }
-            if up {
-                self.views[view].terminal.scroll_up(3);
-            } else {
-                self.views[view].terminal.scroll_down(3);
+            if inner.contains(position) {
+                self.editors[editor].place_cursor(mouse.column.saturating_sub(inner.x));
             }
         }
         Ok(())
+    }
+
+    fn forward_mouse_to_view(&mut self, view: ViewId, mouse: MouseEvent) -> Result<bool> {
+        if !self.views[view].definition.use_pty {
+            return Ok(false);
+        }
+        let inner = self.areas.views[view].inner(Margin::new(1, 1));
+        let position = ui::position(mouse.column, mouse.row);
+        if !inner.contains(position) {
+            return Ok(false);
+        }
+        let row = mouse.row - inner.y;
+        let column = mouse.column - inner.x;
+        let terminal = &self.views[view].terminal;
+        let (rows, columns) = terminal.size();
+        if row >= rows || column >= columns {
+            return Ok(false);
+        }
+        let Some(bytes) = encode_mouse(mouse, row, column, terminal) else {
+            return Ok(false);
+        };
+        let Some(process) = &mut self.views[view].process else {
+            return Ok(false);
+        };
+        process.write_input(&bytes)?;
+        Ok(true)
     }
 
     fn handle_worker_event(&mut self, event: AppEvent) -> Result<()> {
@@ -538,32 +532,48 @@ fn encode_key(event: KeyEvent, application_cursor: bool) -> Option<Vec<u8>> {
     Some(bytes)
 }
 
-fn encode_wheel(
+fn encode_mouse(
     mouse: MouseEvent,
     row: u16,
     column: u16,
     terminal: &crate::terminal_model::TerminalModel,
 ) -> Option<Vec<u8>> {
-    let button = match mouse.kind {
-        MouseEventKind::ScrollUp => 64,
-        MouseEventKind::ScrollDown => 65,
-        _ => return None,
-    };
     let (mode, encoding) = terminal.mouse_protocol();
     if mode != vt100::MouseProtocolMode::None {
-        return encode_mouse_wheel(button, row, column, mouse.modifiers, encoding);
+        let (button, release) = match mouse.kind {
+            MouseEventKind::Down(button) => (mouse_button_code(button), false),
+            MouseEventKind::Up(button) if mode != vt100::MouseProtocolMode::Press => (mouse_button_code(button), true),
+            MouseEventKind::ScrollUp => (64, false),
+            MouseEventKind::ScrollDown => (65, false),
+            _ => return None,
+        };
+        return encode_mouse_event(button, release, row, column, mouse.modifiers, encoding);
     }
-    if !terminal.alternate_screen() {
-        return None;
+    match mouse.kind {
+        MouseEventKind::ScrollUp | MouseEventKind::ScrollDown if terminal.alternate_screen() => {
+            let code = if matches!(mouse.kind, MouseEventKind::ScrollUp) {
+                KeyCode::Up
+            } else {
+                KeyCode::Down
+            };
+            let key = encode_key(KeyEvent::new(code, KeyModifiers::NONE), terminal.application_cursor())?;
+            Some(key.repeat(3))
+        }
+        _ => None,
     }
-
-    let code = if button == 64 { KeyCode::Up } else { KeyCode::Down };
-    let key = encode_key(KeyEvent::new(code, KeyModifiers::NONE), terminal.application_cursor())?;
-    Some(key.repeat(3))
 }
 
-fn encode_mouse_wheel(
+const fn mouse_button_code(button: MouseButton) -> u16 {
+    match button {
+        MouseButton::Left => 0,
+        MouseButton::Middle => 1,
+        MouseButton::Right => 2,
+    }
+}
+
+fn encode_mouse_event(
     mut button: u16,
+    release: bool,
     row: u16,
     column: u16,
     modifiers: KeyModifiers,
@@ -576,7 +586,15 @@ fn encode_mouse_wheel(
     let y = row.checked_add(1)?;
 
     if encoding == vt100::MouseProtocolEncoding::Sgr {
-        return Some(format!("\x1b[<{button};{x};{y}M").into_bytes());
+        let terminator = if release { 'm' } else { 'M' };
+        return Some(format!("\x1b[<{button};{x};{y}{terminator}").into_bytes());
+    }
+
+    if release {
+        button = 3
+            + u16::from(modifiers.contains(KeyModifiers::SHIFT)) * 4
+            + u16::from(modifiers.contains(KeyModifiers::ALT)) * 8
+            + u16::from(modifiers.contains(KeyModifiers::CONTROL)) * 16;
     }
 
     let mut bytes = b"\x1b[M".to_vec();
@@ -772,14 +790,14 @@ mod tests {
             row: 0,
             modifiers: KeyModifiers::SHIFT | KeyModifiers::CONTROL,
         };
-        assert_eq!(encode_wheel(default, 0, 0, &terminal).unwrap(), b"\x1b[Mt!!");
+        assert_eq!(encode_mouse(default, 0, 0, &terminal).unwrap(), b"\x1b[Mt!!");
 
         terminal.process(b"\x1b[?1005h");
         let utf8 = MouseEvent {
             modifiers: KeyModifiers::NONE,
             ..default
         };
-        assert_eq!(encode_wheel(utf8, 0, 200, &terminal).unwrap(), b"\x1b[M`\xc3\xa9!");
+        assert_eq!(encode_mouse(utf8, 0, 200, &terminal).unwrap(), b"\x1b[M`\xc3\xa9!");
 
         terminal.process(b"\x1b[?1006h");
         let sgr = MouseEvent {
@@ -788,7 +806,69 @@ mod tests {
             row: 0,
             modifiers: KeyModifiers::ALT,
         };
-        assert_eq!(encode_wheel(sgr, 2, 4, &terminal).unwrap(), b"\x1b[<73;5;3M");
+        assert_eq!(encode_mouse(sgr, 2, 4, &terminal).unwrap(), b"\x1b[<73;5;3M");
+    }
+
+    #[test]
+    fn encodes_clicks_for_requested_mouse_mode() {
+        let mut terminal = crate::terminal_model::TerminalModel::new(10, 10);
+        let left_down = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::CONTROL,
+        };
+        assert!(encode_mouse(left_down, 2, 4, &terminal).is_none());
+
+        terminal.process(b"\x1b[?9h");
+        assert_eq!(encode_mouse(left_down, 2, 4, &terminal).unwrap(), b"\x1b[M0%#");
+        let left_up = MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            ..left_down
+        };
+        assert!(encode_mouse(left_up, 2, 4, &terminal).is_none());
+
+        terminal.process(b"\x1b[?1000h");
+        let middle_down = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Middle),
+            modifiers: KeyModifiers::ALT,
+            ..left_down
+        };
+        let middle_up = MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Middle),
+            ..middle_down
+        };
+        assert_eq!(encode_mouse(middle_up, 2, 4, &terminal).unwrap(), b"\x1b[M+%#");
+
+        terminal.process(b"\x1b[?1006h");
+        assert_eq!(encode_mouse(middle_down, 2, 4, &terminal).unwrap(), b"\x1b[<9;5;3M");
+        assert_eq!(encode_mouse(middle_up, 2, 4, &terminal).unwrap(), b"\x1b[<9;5;3m");
+    }
+
+    #[test]
+    fn clicks_still_focus_views_and_editors_without_tracking() {
+        let configuration = Configuration::parse(&["one {value}".to_owned()]).unwrap();
+        let mut app = new_app(configuration, None);
+        app.handle_terminal_event(Event::Resize(30, 12)).unwrap();
+        app.focus = Focus::Editor(0);
+        let view_click = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 1,
+            row: 1,
+            modifiers: KeyModifiers::NONE,
+        };
+
+        app.handle_terminal_event(Event::Mouse(view_click)).unwrap();
+
+        assert_eq!(app.focus, Focus::View(0));
+        let editor_area = app.areas.editors[0].1;
+        let editor_click = MouseEvent {
+            column: editor_area.x + 1,
+            row: editor_area.y + 1,
+            ..view_click
+        };
+        app.handle_terminal_event(Event::Mouse(editor_click)).unwrap();
+        assert_eq!(app.focus, Focus::Editor(0));
     }
 
     #[test]
@@ -800,11 +880,11 @@ mod tests {
             row: 0,
             modifiers: KeyModifiers::NONE,
         };
-        assert!(encode_wheel(wheel, 0, 0, &terminal).is_none());
+        assert!(encode_mouse(wheel, 0, 0, &terminal).is_none());
 
         terminal.process(b"\x1b[?1049h\x1b[?1h");
 
-        assert_eq!(encode_wheel(wheel, 0, 0, &terminal).unwrap(), b"\x1bOB\x1bOB\x1bOB");
+        assert_eq!(encode_mouse(wheel, 0, 0, &terminal).unwrap(), b"\x1bOB\x1bOB\x1bOB");
     }
 
     #[test]
@@ -817,10 +897,10 @@ mod tests {
             row: 0,
             modifiers: KeyModifiers::NONE,
         };
-        assert!(encode_wheel(wheel, 0, 223, &terminal).is_none());
+        assert!(encode_mouse(wheel, 0, 223, &terminal).is_none());
 
         terminal.process(b"\x1b[?1005h");
 
-        assert!(encode_wheel(wheel, 0, 2_015, &terminal).is_none());
+        assert!(encode_mouse(wheel, 0, 2_015, &terminal).is_none());
     }
 }
