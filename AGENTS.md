@@ -67,7 +67,8 @@ Supported platforms are Linux and macOS. Windows is intentionally unsupported.
 - `src/cli.rs`: Clap arguments, keymap loading, input validation/opening, TTY-size parsing, and view-label parsing.
 - `src/template.rs`: per-view TTY-mode parsing, title selection, template compilation, editor discovery/ordering,
   expansion, and affected-view mapping.
-- `src/editor.rs`: grapheme-aware single-line editing, paste normalization, and horizontal viewport state.
+- `src/editor.rs`: grapheme-aware single-line editing, rq-style movement/deletion bindings, bounded undo/redo and yank
+  state, paste normalization, and horizontal viewport state.
 - `src/input_store.rs`: temporary backing store, capture thread, condition variable, and per-run replay pumps.
 - `src/pty.rs`: PTY or output-pipe spawn, descriptor setup, interactive writes, resize, worker reader, and process
   cleanup.
@@ -112,6 +113,11 @@ releases, and wheel events inside a PTY pane are forwarded when the child has en
 protocol mode and encoding. On the alternate screen without tracking, one wheel tick becomes three application-aware
 Up or Down sequences. Otherwise wheel events scroll the local model. `[no-tty]` views always keep mouse events local;
 motion and drag events are not forwarded.
+
+Focused editors handle intrinsic rq-style single-line bindings after application-keymap dispatch. They support
+grapheme and word movement/deletion, deletion to either end, kill/yank, and a bounded 2,048-edit undo/redo history.
+`Up`/`Ctrl+U` undo and `Down`/`Ctrl+R` redo, although the embedded application keymap consumes `Ctrl+R` for manual
+restart first. Text-changing undo/redo operations use the same affected-view restart debounce as direct edits.
 
 ## Dependency Notes
 

@@ -82,6 +82,24 @@ The embedded default keymap is:
 | `End` | Follow live output in the focused view |
 | `Ctrl+Q` | Quit |
 
+When an editor is focused, it also supports the following `rq`-style line-editing keys. These are intrinsic editor
+bindings; application bindings from the active keymap take precedence.
+
+| Key | Editor action |
+| --- | --- |
+| `Left` / `Right`, `Ctrl+B` / `Ctrl+F` | Move by one grapheme |
+| `Home` / `End`, `Ctrl+A` / `Ctrl+E` | Move to the start or end |
+| `Ctrl+Left` / `Ctrl+Right`, `Alt+B` / `Alt+F` | Move by one word |
+| `Backspace` / `Ctrl+H`, `Delete` / `Ctrl+D` | Delete one grapheme |
+| `Ctrl+W`, `Alt+H` / `Alt+Backspace` | Delete the previous word |
+| `Alt+D` / `Alt+Delete` | Delete the next word |
+| `Ctrl+J` / `Ctrl+K` | Delete to the start or end |
+| `Ctrl+Y` | Yank the most recently killed text |
+| `Up` / `Ctrl+U`, `Down` | Undo or redo |
+
+`Ctrl+R` also performs editor redo when it is not present in the application keymap. The embedded keymap binds it to
+manual restart, so that application action takes precedence by default.
+
 While a PTY-backed view is focused, other keys, including `Ctrl+C`, are sent to its controlling terminal. If the command
 has enabled terminal mouse tracking, button presses, releases, and wheel events inside the pane are forwarded using its
 requested mouse encoding. Button presses also focus the pane. Without mouse tracking, wheel events normally scroll
