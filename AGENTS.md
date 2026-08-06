@@ -70,14 +70,15 @@ Supported platforms are Linux and macOS. Windows is intentionally unsupported.
 - `src/input_store.rs`: temporary backing store, capture thread, condition variable, and per-run replay pumps.
 - `src/pty.rs`: PTY or output-pipe spawn, descriptor setup, interactive writes, resize, worker reader, and process
   cleanup.
-- `src/terminal_model.rs`: bounded `vt100` model, scrollback, ANSI cell conversion, and cursor rendering.
+- `src/terminal_model.rs`: bounded `vt100` model, scrollback, terminal input modes, ANSI cell conversion, and cursor
+  rendering.
 - `src/view.rs`: per-view generation, process, terminal model, TTY-size policy, and run state.
 - `src/keymap.rs`: YAML keymap loading, action deserialization, and application shortcut normalization and dispatch through
   `mkutils::KeyMapSession`.
 - `src/default-config.yaml`: embedded default application keymap.
 - `src/focus.rs`: traversal across views and editors.
-- `src/app.rs`: Tokio event loop, resize-event propagation, debounce, restarts, signals, input routing, and generation
-  filtering. It also retains the latest key or mouse event for the optional debug display.
+- `src/app.rs`: Tokio event loop, resize-event propagation, debounce, restarts, signals, key and mouse-wheel input
+  routing, and generation filtering. It also retains the latest key or mouse event for the optional debug display.
 - `src/ui.rs`: equal-width layout and resize calculation, editor blocks, focus styling, mouse areas, optional bottom
   debug bar, and too-small fallback.
 - `src/terminal.rs`: `/dev/tty` Ratatui backend and RAII restoration.
@@ -105,8 +106,10 @@ The embedded defaults are:
 - `Ctrl+G`: toggle the bottom input-event debug bar
 - `End`: return a focused view to live-follow mode; it remains an editor movement key when an editor is focused
 
-Unmatched keys in a PTY-backed view, including `Ctrl+C`, are encoded and written to the PTY master. A `[no-tty]` view
-has no interactive input channel, so these writes are ignored. Mouse events remain local.
+Unmatched keys in a PTY-backed view, including `Ctrl+C`, are encoded and written to the PTY master. Wheel events inside
+a PTY pane are forwarded when the child has enabled mouse tracking. On the alternate screen without tracking, one wheel
+tick becomes three application-aware Up or Down sequences. Otherwise wheel events scroll the local model. `[no-tty]`
+views always keep wheel events local, and other mouse events are not forwarded.
 
 ## Dependency Notes
 
@@ -134,8 +137,9 @@ git diff --check
 
 Tests include real Unix PTY and pipe integration coverage. They verify fd TTY identity, PTY and no-TTY `/dev/tty`
 behavior, merged stdout/stderr, binary replay, active-capture restart, isolated backpressure, ANSI parsing, interactive
-keys, keymap configuration, application and child resize behavior, TTY-size locking, and process-group termination. CI
-runs the suite on both Ubuntu and macOS via `.github/workflows/ci.yml`.
+keys, mouse-wheel encoding and alternate-screen fallback, keymap configuration, application and child resize behavior,
+TTY-size locking, and process-group termination. CI runs the suite on both Ubuntu and macOS via
+`.github/workflows/ci.yml`.
 
 For a local end-to-end TUI smoke test without consuming the shell's current terminal, `script(1)` can allocate a pseudo
 terminal. Ensure the command has piped data and send `Ctrl+Q` through the pseudo terminal.
@@ -159,5 +163,5 @@ terminal. Ensure the command has piped data and send `Ctrl+Q` through the pseudo
 - Keep output visible after child exit and do not restart merely because new input arrived.
 - Keep `[no-tty]` as a per-view first-token marker; do not turn it into a global process mode without a deliberate
   product-spec change.
-- Do not add an implicit shell, input-size cap, multiline editor, child mouse forwarding, or stdout export without a
-  deliberate product-spec change.
+- Do not add an implicit shell, input-size cap, multiline editor, forwarding for additional mouse event kinds, or stdout
+  export without a deliberate product-spec change.
