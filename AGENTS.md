@@ -130,6 +130,9 @@ crates:
 The `[patch.crates-io]` entries in `Cargo.toml` match the revisions used by `mkutils` itself. Do not remove or update
 them without first proving that `mkutils` compiles and its keymap tests pass against replacement releases.
 
+The Nix flake reads its Fenix channel and components from `rust-toolchain.toml`. Its Crane source fileset contains the
+normal Cargo sources plus `src/default-config.yaml`, which must remain available to the keymap module's `include_str!`.
+
 ## Verification
 
 The repository denies Rust warnings and Clippy `all`, `cargo`, `nursery`, and `pedantic` lints. Before finishing changes,
@@ -140,14 +143,15 @@ cargo fmt --all --check
 cargo test --all-targets
 cargo clippy --all-targets --all-features
 cargo build --release
+nix build
 git diff --check
 ```
 
 Tests include real Unix PTY and pipe integration coverage. They verify fd TTY identity, PTY and no-TTY `/dev/tty`
 behavior, merged stdout/stderr, binary replay, active-capture restart, isolated backpressure, ANSI parsing, interactive
 keys, mouse click and wheel encoding, alternate-screen wheel fallback, keymap configuration, application and child
-resize behavior, TTY-size locking, and process-group termination. CI runs the suite on both Ubuntu and macOS via
-`.github/workflows/ci.yml`.
+resize behavior, TTY-size locking, and process-group termination. CI runs the Rust suite and builds the Nix package on
+both Ubuntu and macOS via `.github/workflows/ci.yml`.
 
 For a local end-to-end TUI smoke test without consuming the shell's current terminal, `script(1)` can allocate a pseudo
 terminal. Ensure the command has piped data and send `Ctrl+Q` through the pseudo terminal.

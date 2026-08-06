@@ -21,20 +21,21 @@
       system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-        rust-toolchain = fenix.packages.${system}.stable.withComponents [
-          "cargo"
-          "clippy"
-          "rust-docs"
-          "rust-src"
-          "rust-std"
-          "rustc"
-          "rustfmt"
-        ];
+        rust-toolchain-config = (builtins.fromTOML (builtins.readFile ./rust-toolchain.toml)).toolchain;
+        rust-toolchain =
+          fenix.packages.${system}.${rust-toolchain-config.channel}.withComponents
+            rust-toolchain-config.components;
         crane-lib = (crane.mkLib pkgs).overrideToolchain rust-toolchain;
       in
       {
         packages.default = crane-lib.buildPackage {
-          src = crane-lib.cleanCargoSource ./.;
+          src = pkgs.lib.fileset.toSource {
+            root = ./.;
+            fileset = pkgs.lib.fileset.unions [
+              (crane-lib.fileset.commonCargoSources ./.)
+              ./src/default-config.yaml
+            ];
+          };
         };
 
         devShells.default = crane-lib.devShell { };

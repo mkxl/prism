@@ -11,6 +11,11 @@ producer | prism \
   count='[no-tty] wc -c'
 ```
 
+## Building
+
+Run `cargo build --release` for a normal Rust build or `nix build` for the flake package. The flake uses the channel and
+components declared in `rust-toolchain.toml` and includes the embedded YAML keymap in its filtered Cargo source.
+
 Use `--input FILE` instead of a pipeline to read a file once. Input is captured as arbitrary bytes in an append-only
 temporary store. Each run replays the captured prefix and then receives newly published bytes independently; input EOF
 does not exit the application.
