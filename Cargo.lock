@@ -321,7 +321,7 @@ checksum = "61803da095bee82a81bb1a452ecc25d3b2f1416d1897eb86430c6159ef717c17"
 [[package]]
 name = "crossterm"
 version = "0.29.0"
-source = "git+https://github.com/crossterm-rs/crossterm?rev=4f08595#4f08595ef4477de2d504dcced24060ed9e3d582a"
+source = "git+https://github.com/crossterm-rs/crossterm?rev=e27ee30#e27ee3054006616e13552d3dc176f92e315c0489"
 dependencies = [
  "bitflags 2.13.1",
  "crossterm_winapi",
@@ -983,9 +983,9 @@ dependencies = [
 
 [[package]]
 name = "mkutils"
-version = "0.1.193"
+version = "0.1.194"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd30569f0b60bf7bdc1ee5173979d238e779edd0d6afa49e3c068964bb7ea708"
+checksum = "de6be12f750c5045d7fbcc3e846d650db3b27a4517f4dcf5f784a0669c0bd326"
 dependencies = [
  "anyhow",
  "arrayvec",
@@ -1020,9 +1020,9 @@ dependencies = [
 
 [[package]]
 name = "mkutils-macros"
-version = "0.1.193"
+version = "0.1.194"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f227972245849ac9a515fc61ac23897e987da72ab32479ae64853ee0656a5f21"
+checksum = "6becb7dbc902f7dfb77a5f23e1c9404c5e59ce684ad3618dc5b5efb680ff77c7"
 dependencies = [
  "heck",
  "proc-macro2",
