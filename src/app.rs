@@ -4,7 +4,7 @@ use crate::{
     event::AppEvent,
     focus::Focus,
     input_store::InputStore,
-    keymap::{Action, default_keymap, normalized_key_event},
+    keymap::{Action, normalized_key_event},
     pty::RunningProcess,
     template::{Configuration, EditorId, ExpansionError, ViewId},
     terminal::HostTerminal,
@@ -66,6 +66,7 @@ impl App {
         configuration: Configuration,
         source: Box<dyn Read + Send>,
         tty_size_lock: Option<TtySizeLock>,
+        keymap: KeyMapSession<Action>,
     ) -> Result<Self> {
         let (event_sender, events) = unbounded_channel();
         let input = InputStore::start(source, event_sender.clone())?;
@@ -89,7 +90,7 @@ impl App {
             editor_order: configuration.editor_order,
             affected_views: configuration.affected_views,
             focus,
-            keymap: default_keymap(),
+            keymap,
             pending_restarts: HashMap::new(),
             areas: Areas::default(),
             debug_mode: false,
@@ -558,10 +559,20 @@ mod tests {
     use super::*;
     use crossterm::event::{MediaKeyCode, ModifierKeyCode};
 
+    fn new_app(configuration: Configuration, tty_size_lock: Option<TtySizeLock>) -> App {
+        App::new(
+            configuration,
+            Box::new(std::io::Cursor::new(Vec::<u8>::new())),
+            tty_size_lock,
+            crate::keymap::load_keymap(None).unwrap(),
+        )
+        .unwrap()
+    }
+
     #[test]
     fn debounce_is_trailing_edge_and_scoped_to_affected_views() {
         let configuration = Configuration::parse(&["one {shared}".to_owned(), "two {other}".to_owned()]).unwrap();
-        let mut app = App::new(configuration, Box::new(std::io::Cursor::new(Vec::<u8>::new())), None).unwrap();
+        let mut app = new_app(configuration, None);
         let first = Instant::now();
         app.schedule_editor_restart(0, first);
         let original = app.pending_restarts[&0];
@@ -573,7 +584,7 @@ mod tests {
     #[test]
     fn initializes_prompt_editors_with_configured_text() {
         let configuration = Configuration::parse(&[r#"command "{query=hello world}""#.to_owned()]).unwrap();
-        let app = App::new(configuration, Box::new(std::io::Cursor::new(Vec::<u8>::new())), None).unwrap();
+        let app = new_app(configuration, None);
         assert_eq!(app.editors[0].text, "hello world");
         assert_eq!(app.editors[0].cursor, "hello world".len());
     }
@@ -581,7 +592,7 @@ mod tests {
     #[test]
     fn stale_generation_output_is_ignored() {
         let configuration = Configuration::parse(&["cat".to_owned()]).unwrap();
-        let mut app = App::new(configuration, Box::new(std::io::Cursor::new(Vec::<u8>::new())), None).unwrap();
+        let mut app = new_app(configuration, None);
         app.views[0].generation = 2;
         app.handle_worker_event(AppEvent::PtyOutput {
             view: 0,
@@ -596,7 +607,7 @@ mod tests {
     #[test]
     fn terminal_resizes_propagate_to_views() {
         let configuration = Configuration::parse(&["one {value}".to_owned(), "two".to_owned()]).unwrap();
-        let mut app = App::new(configuration, Box::new(std::io::Cursor::new(Vec::<u8>::new())), None).unwrap();
+        let mut app = new_app(configuration, None);
 
         app.handle_terminal_event(Event::Resize(100, 30)).unwrap();
 
@@ -607,7 +618,7 @@ mod tests {
     #[test]
     fn debug_mode_toggles_and_records_terminal_input_events() {
         let configuration = Configuration::parse(&["one".to_owned()]).unwrap();
-        let mut app = App::new(configuration, Box::new(std::io::Cursor::new(Vec::<u8>::new())), None).unwrap();
+        let mut app = new_app(configuration, None);
         let toggle = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL);
 
         app.handle_terminal_event(Event::Key(toggle)).unwrap();
@@ -630,33 +641,18 @@ mod tests {
     #[test]
     fn locked_tty_sizes_ignore_later_terminal_resizes() {
         let configuration = Configuration::parse(&["one".to_owned()]).unwrap();
-        let mut initial = App::new(
-            configuration,
-            Box::new(std::io::Cursor::new(Vec::<u8>::new())),
-            Some(TtySizeLock::Initial),
-        )
-        .unwrap();
+        let mut initial = new_app(configuration, Some(TtySizeLock::Initial));
         initial.handle_terminal_event(Event::Resize(100, 30)).unwrap();
         initial.handle_terminal_event(Event::Resize(80, 20)).unwrap();
         assert_eq!(initial.views[0].terminal.size(), (28, 98));
 
         let configuration = Configuration::parse(&["one".to_owned()]).unwrap();
-        let mut fixed = App::new(
-            configuration,
-            Box::new(std::io::Cursor::new(Vec::<u8>::new())),
-            Some(TtySizeLock::Fixed { columns: 80, rows: 24 }),
-        )
-        .unwrap();
+        let mut fixed = new_app(configuration, Some(TtySizeLock::Fixed { columns: 80, rows: 24 }));
         fixed.handle_terminal_event(Event::Resize(100, 30)).unwrap();
         assert_eq!(fixed.views[0].terminal.size(), (24, 80));
 
         let configuration = Configuration::parse(&["[no-tty] one".to_owned()]).unwrap();
-        let mut piped = App::new(
-            configuration,
-            Box::new(std::io::Cursor::new(Vec::<u8>::new())),
-            Some(TtySizeLock::Fixed { columns: 80, rows: 24 }),
-        )
-        .unwrap();
+        let mut piped = new_app(configuration, Some(TtySizeLock::Fixed { columns: 80, rows: 24 }));
         piped.handle_terminal_event(Event::Resize(100, 30)).unwrap();
         piped.handle_terminal_event(Event::Resize(80, 20)).unwrap();
         assert_eq!(piped.views[0].terminal.size(), (18, 78));

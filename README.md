@@ -42,7 +42,35 @@ By default, each PTY-backed child terminal follows its view's dimensions. Use `-
 initial view size, or `--lock-tty-size=80x24` to use an explicit `COLUMNSxROWS` size for every PTY-backed view. This
 option does not lock pipe-backed views.
 
+## Keymap Configuration
+
+Prism uses the embedded bindings listed below unless `--config-file FILE` supplies a YAML keymap. A custom file replaces
+the complete default keymap rather than extending it, using the same structure as `mkxl/ftg`:
+
+```yaml
+key_map:
+  - keys: [alt+j]
+    binding:
+      command: focus_next
+  - keys: [alt+k]
+    binding:
+      command: focus_previous
+  - keys: [ctrl+q]
+    binding:
+      command: quit
+```
+
+Run it with `producer | prism --config-file keys.yaml cat 'jq .'`. Available commands are `focus_next`,
+`focus_previous`, `quit`, `leave_view`, `restart`, `follow_view`, and `toggle_debug`.
+
+Key expressions are lowercase. The optional modifiers `ctrl`, `shift`, `alt`, and `super` precede the key with `+`.
+Keys may be a single character, a function key such as `f1`, or a name such as `tab`, `back_tab`, `enter`, `esc`,
+`left`, `right`, `up`, `down`, `home`, `end`, `page_up`, `page_down`, `backspace`, `delete`, or `insert`. For example,
+the default `Shift+Tab` binding is written as `shift+back_tab`.
+
 ## Keys
+
+The embedded default keymap is:
 
 | Key | Action |
 | --- | --- |

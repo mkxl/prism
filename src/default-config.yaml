@@ -1,0 +1,22 @@
+key_map:
+  - keys: [tab]
+    binding:
+      command: focus_next
+  - keys: [shift+back_tab]
+    binding:
+      command: focus_previous
+  - keys: [ctrl+q]
+    binding:
+      command: quit
+  - keys: ["ctrl+]"]
+    binding:
+      command: leave_view
+  - keys: [ctrl+r]
+    binding:
+      command: restart
+  - keys: [end]
+    binding:
+      command: follow_view
+  - keys: [ctrl+g]
+    binding:
+      command: toggle_debug
