@@ -1,21 +1,21 @@
 {
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-    flake-utils.url = "github:numtide/flake-utils";
+    crane.url = "github:ipetkov/crane/2510f2c";  # TODO: [https://github.com/crossterm-rs/crossterm/pull/1099]
     fenix = {
       url = "github:nix-community/fenix/monthly";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    crane.url = "github:ipetkov/crane/2510f2c";  # TODO: [https://github.com/crossterm-rs/crossterm/pull/1099]
+    flake-utils.url = "github:numtide/flake-utils";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
   };
 
   outputs =
     {
+      self,
       crane,
       fenix,
       flake-utils,
       nixpkgs,
-      ...
     }:
     flake-utils.lib.eachDefaultSystem (
       system:
