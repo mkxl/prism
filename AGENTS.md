@@ -53,7 +53,8 @@ Supported platforms are Linux and macOS. Windows is intentionally unsupported.
 - PTY mode is the default. The child receives `TERM=xterm-256color`, stdout and stderr use the PTY slave, `/dev/tty` is
   available, and unmatched focused-view keys are written to the PTY master.
 - A view beginning with `[no-tty]` uses a shared stdout/stderr pipe. The child still starts in its own session and
-  process group, but has no controlling terminal; interactive focused-view input and resize ioctls are no-ops.
+  process group, but has no controlling terminal; interactive focused-view input and resize ioctls are no-ops. Its
+  terminal model renders bare pipe line feeds from the first column, matching normal terminal output processing.
 - Application resize events immediately recalculate pane dimensions. By default, each terminal model and child PTY
   follows its pane's inner dimensions.
 - `--lock-tty-size` locks each PTY-backed view to its first valid pane size. `--lock-tty-size=COLUMNSxROWS` instead uses

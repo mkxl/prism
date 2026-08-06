@@ -41,6 +41,22 @@ impl TerminalModel {
         }
     }
 
+    pub fn process_pipe_output(&mut self, bytes: &[u8]) {
+        if !bytes.contains(&b'\n') {
+            self.process(bytes);
+            return;
+        }
+
+        let mut terminal_bytes = Vec::with_capacity(bytes.len());
+        for &byte in bytes {
+            if byte == b'\n' {
+                terminal_bytes.push(b'\r');
+            }
+            terminal_bytes.push(byte);
+        }
+        self.process(&terminal_bytes);
+    }
+
     pub fn resize(&mut self, rows: u16, columns: u16) {
         self.parser.screen_mut().set_size(rows.max(1), columns.max(1));
     }
@@ -188,6 +204,24 @@ mod tests {
         );
         model.resize(0, 0);
         assert_eq!(model.size(), (1, 1));
+    }
+
+    #[test]
+    fn pipe_output_line_feeds_return_to_the_first_column() {
+        let mut model = TerminalModel::new(3, 10);
+
+        model.process_pipe_output(b"one\ntwo\nthree");
+
+        assert_eq!(model.contents(), "one\ntwo\nthree");
+    }
+
+    #[test]
+    fn terminal_output_preserves_bare_line_feed_semantics() {
+        let mut model = TerminalModel::new(2, 10);
+
+        model.process(b"one\ntwo");
+
+        assert_eq!(model.contents(), "one\n   two");
     }
 
     #[test]

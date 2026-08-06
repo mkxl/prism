@@ -36,7 +36,8 @@ are delivered through the PTY master, and application resizes update both the te
 Start an individual view specification with the complete token `[no-tty]` to capture that child's merged stdout and
 stderr through a pipe, for example `output='[no-tty] jq .'`. The marker is removed before execution. In this mode the
 child has no controlling terminal, `/dev/tty` is unavailable, and focused-view keystrokes are not delivered. Its local
-terminal model still follows the view's dimensions for rendering.
+terminal model still follows the view's dimensions for rendering. Bare line feeds from pipe output are displayed as
+normal new lines that begin in the first column.
 
 By default, each PTY-backed child terminal follows its view's dimensions. Use `--lock-tty-size` to keep each child at its
 initial view size, or `--lock-tty-size=80x24` to use an explicit `COLUMNSxROWS` size for every PTY-backed view. This

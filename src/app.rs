@@ -366,7 +366,12 @@ impl App {
                     .get(view)
                     .is_some_and(|candidate| candidate.generation == generation)
                 {
-                    self.views[view].terminal.process(&bytes);
+                    let view = &mut self.views[view];
+                    if view.definition.use_pty {
+                        view.terminal.process(&bytes);
+                    } else {
+                        view.terminal.process_pipe_output(&bytes);
+                    }
                 }
             }
             AppEvent::WorkerFailed {
