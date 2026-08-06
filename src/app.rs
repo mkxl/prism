@@ -39,6 +39,12 @@ pub enum RunOutcome {
     Signal(i32),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DebugEvent {
+    Key(KeyEvent),
+    Mouse(MouseEvent),
+}
+
 pub struct App {
     input: InputStore,
     events: UnboundedReceiver<AppEvent>,
@@ -51,6 +57,8 @@ pub struct App {
     keymap: KeyMapSession<Action>,
     pending_restarts: HashMap<ViewId, Instant>,
     pub(crate) areas: Areas,
+    pub(crate) debug_mode: bool,
+    pub(crate) debug_event: Option<DebugEvent>,
 }
 
 impl App {
@@ -84,6 +92,8 @@ impl App {
             keymap: default_keymap(),
             pending_restarts: HashMap::new(),
             areas: Areas::default(),
+            debug_mode: false,
+            debug_event: None,
         })
     }
 
@@ -140,12 +150,20 @@ impl App {
 
     fn handle_terminal_event(&mut self, event: Event) -> Result<Option<RunOutcome>> {
         match event {
-            Event::Key(key) if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) => self.handle_key(key),
+            Event::Key(key) => {
+                self.debug_event = Some(DebugEvent::Key(key));
+                if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+                    self.handle_key(key)
+                } else {
+                    Ok(None)
+                }
+            }
             Event::Paste(pasted) => {
                 self.handle_paste(&pasted)?;
                 Ok(None)
             }
             Event::Mouse(mouse) => {
+                self.debug_event = Some(DebugEvent::Mouse(mouse));
                 self.handle_mouse(mouse);
                 Ok(None)
             }
@@ -153,12 +171,15 @@ impl App {
                 ui::resize(self, Rect::new(0, 0, columns, rows));
                 Ok(None)
             }
-            Event::FocusGained | Event::FocusLost | Event::Key(_) => Ok(None),
+            Event::FocusGained | Event::FocusLost => Ok(None),
         }
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Result<Option<RunOutcome>> {
         if let Some(action) = self.keymap.on_key_event(normalized_key_event(key)).copied() {
+            if action == Action::ToggleDebug && key.kind == KeyEventKind::Repeat {
+                return Ok(None);
+            }
             if action == Action::FollowView && matches!(self.focus, Focus::Editor(_)) {
                 // End remains an editor key when no view is focused.
             } else {
@@ -219,6 +240,7 @@ impl App {
                     self.views[view].terminal.follow();
                 }
             }
+            Action::ToggleDebug => self.debug_mode = !self.debug_mode,
         }
         None
     }
@@ -580,6 +602,29 @@ mod tests {
 
         assert_eq!(app.views[0].terminal.size(), (25, 48));
         assert_eq!(app.views[1].terminal.size(), (25, 48));
+    }
+
+    #[test]
+    fn debug_mode_toggles_and_records_terminal_input_events() {
+        let configuration = Configuration::parse(&["one".to_owned()]).unwrap();
+        let mut app = App::new(configuration, Box::new(std::io::Cursor::new(Vec::<u8>::new())), None).unwrap();
+        let toggle = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL);
+
+        app.handle_terminal_event(Event::Key(toggle)).unwrap();
+        assert!(app.debug_mode);
+        assert_eq!(app.debug_event, Some(DebugEvent::Key(toggle)));
+
+        let mouse = MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: 4,
+            row: 2,
+            modifiers: KeyModifiers::NONE,
+        };
+        app.handle_terminal_event(Event::Mouse(mouse)).unwrap();
+        assert_eq!(app.debug_event, Some(DebugEvent::Mouse(mouse)));
+
+        app.handle_terminal_event(Event::Key(toggle)).unwrap();
+        assert!(!app.debug_mode);
     }
 
     #[test]
