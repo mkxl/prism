@@ -5,7 +5,8 @@
 `prism` is a Rust 2024 terminal application for running multiple commands against one shared byte stream. It captures
 stdin (or one `--input` file) into a temporary append-only store, replays the complete captured prefix to every command
 run, and continues streaming new bytes to each run independently. Commands render in horizontally arranged terminal
-views, use a PTY by default, can opt into pipe-backed output, and can reference shared single-line prompt editors.
+views, use a PTY by default, can opt into pipe-backed output, can reference shared single-line prompt editors, and use
+an embedded or explicitly supplied YAML keymap.
 
 Supported platforms are Linux and macOS. Windows is intentionally unsupported.
 
@@ -30,6 +31,7 @@ Supported platforms are Linux and macOS. Windows is intentionally unsupported.
 - Child failures and nonzero exits are view-local and do not determine prism's final exit status.
 - UI input and rendering use `/dev/tty`; stdin remains the data source.
 - Restore raw mode, alternate screen, cursor, mouse capture, and bracketed paste before reporting fatal errors.
+- Parse and validate a requested keymap configuration before opening the input source or starting input capture.
 
 ## Template Semantics
 
@@ -61,7 +63,7 @@ Supported platforms are Linux and macOS. Windows is intentionally unsupported.
 ## Source Map
 
 - `src/main.rs`: runtime creation, top-level diagnostics, and exit status.
-- `src/cli.rs`: Clap arguments, input validation/opening, TTY-size parsing, and view-label parsing.
+- `src/cli.rs`: Clap arguments, keymap loading, input validation/opening, TTY-size parsing, and view-label parsing.
 - `src/template.rs`: per-view TTY-mode parsing, title selection, template compilation, editor discovery/ordering,
   expansion, and affected-view mapping.
 - `src/editor.rs`: grapheme-aware single-line editing, paste normalization, and horizontal viewport state.
@@ -70,7 +72,9 @@ Supported platforms are Linux and macOS. Windows is intentionally unsupported.
   cleanup.
 - `src/terminal_model.rs`: bounded `vt100` model, scrollback, ANSI cell conversion, and cursor rendering.
 - `src/view.rs`: per-view generation, process, terminal model, TTY-size policy, and run state.
-- `src/keymap.rs`: all application-level shortcuts through `mkutils::KeyMapSession`.
+- `src/keymap.rs`: YAML keymap loading, action deserialization, and application shortcut normalization and dispatch through
+  `mkutils::KeyMapSession`.
+- `src/default-config.yaml`: embedded default application keymap.
 - `src/focus.rs`: traversal across views and editors.
 - `src/app.rs`: Tokio event loop, resize-event propagation, debounce, restarts, signals, input routing, and generation
   filtering. It also retains the latest key or mouse event for the optional debug display.
@@ -86,6 +90,12 @@ instead of sharing the terminal parser behind a lock.
 
 Application shortcuts must remain represented and dispatched through `mkutils` keybinding types. Do not replace them
 with a direct monolithic match over Crossterm key events.
+
+`--config-file FILE` reads a top-level YAML `key_map` list in the same shape as `mkxl/ftg`. A supplied keymap fully
+replaces `src/default-config.yaml`; it is not merged with the defaults. Binding actions deserialize from snake-case
+`command` values. Key expressions use mkutils' lowercase names and `ctrl`, `shift`, `alt`, or `super` modifiers.
+
+The embedded defaults are:
 
 - `Tab`: focus next
 - `Shift+Tab`: focus previous
@@ -124,8 +134,8 @@ git diff --check
 
 Tests include real Unix PTY and pipe integration coverage. They verify fd TTY identity, PTY and no-TTY `/dev/tty`
 behavior, merged stdout/stderr, binary replay, active-capture restart, isolated backpressure, ANSI parsing, interactive
-keys, application and child resize behavior, TTY-size locking, and process-group termination. CI runs the suite on both
-Ubuntu and macOS via `.github/workflows/ci.yml`.
+keys, keymap configuration, application and child resize behavior, TTY-size locking, and process-group termination. CI
+runs the suite on both Ubuntu and macOS via `.github/workflows/ci.yml`.
 
 For a local end-to-end TUI smoke test without consuming the shell's current terminal, `script(1)` can allocate a pseudo
 terminal. Ensure the command has piped data and send `Ctrl+Q` through the pseudo terminal.

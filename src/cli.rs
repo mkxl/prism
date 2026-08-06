@@ -1,4 +1,4 @@
-use crate::{app::App, template::Configuration};
+use crate::{app::App, keymap::load_keymap, template::Configuration};
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use std::{
@@ -16,6 +16,10 @@ pub struct Cli {
     #[arg(long, value_name = "FILE")]
     input: Option<PathBuf>,
 
+    /// Load application keybindings from this YAML file.
+    #[arg(long, value_name = "FILE")]
+    config_file: Option<PathBuf>,
+
     /// Lock child TTYs at their initial view size or at a fixed size.
     #[arg(long, value_name = "COLUMNSxROWS", num_args = 0..=1, require_equals = true, default_missing_value = "initial")]
     lock_tty_size: Option<TtySizeLock>,
@@ -28,8 +32,9 @@ pub struct Cli {
 impl Cli {
     pub async fn run(self) -> Result<crate::app::RunOutcome> {
         let configuration = Configuration::parse(&self.views)?;
+        let keymap = load_keymap(self.config_file.as_deref())?;
         let source = self.open_input()?;
-        App::new(configuration, source, self.lock_tty_size)?.run().await
+        App::new(configuration, source, self.lock_tty_size, keymap)?.run().await
     }
 
     fn open_input(&self) -> Result<Box<dyn Read + Send>> {
@@ -135,6 +140,13 @@ mod tests {
     #[test]
     fn rejects_view_option() {
         assert!(Cli::try_parse_from(["prism", "--view=cat"]).is_err());
+    }
+
+    #[test]
+    fn parses_config_file_without_consuming_views() {
+        let cli = Cli::try_parse_from(["prism", "--config-file", "keys.yaml", "cat"]).unwrap();
+        assert_eq!(cli.config_file, Some(PathBuf::from("keys.yaml")));
+        assert_eq!(cli.views, arguments(&["cat"]));
     }
 
     #[test]
