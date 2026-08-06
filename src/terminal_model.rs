@@ -102,6 +102,17 @@ impl TerminalModel {
         self.parser.screen().bracketed_paste()
     }
 
+    #[must_use]
+    pub fn alternate_screen(&self) -> bool {
+        self.parser.screen().alternate_screen()
+    }
+
+    #[must_use]
+    pub fn mouse_protocol(&self) -> (vt100::MouseProtocolMode, vt100::MouseProtocolEncoding) {
+        let screen = self.parser.screen();
+        (screen.mouse_protocol_mode(), screen.mouse_protocol_encoding())
+    }
+
     pub fn render(&self, frame: &mut Frame, area: Rect, focused: bool) {
         let screen = self.parser.screen();
         for row in 0..area.height {
@@ -241,5 +252,26 @@ mod tests {
 
         assert_eq!(model.contents(), contents);
         assert!(!model.is_following());
+    }
+
+    #[test]
+    fn exposes_alternate_screen_and_mouse_protocol() {
+        let mut model = TerminalModel::new(3, 10);
+        assert!(!model.alternate_screen());
+        assert_eq!(
+            model.mouse_protocol(),
+            (vt100::MouseProtocolMode::None, vt100::MouseProtocolEncoding::Default)
+        );
+
+        model.process(b"\x1b[?1049h\x1b[?1000h\x1b[?1006h");
+
+        assert!(model.alternate_screen());
+        assert_eq!(
+            model.mouse_protocol(),
+            (
+                vt100::MouseProtocolMode::PressRelease,
+                vt100::MouseProtocolEncoding::Sgr
+            )
+        );
     }
 }

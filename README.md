@@ -81,6 +81,10 @@ The embedded default keymap is:
 | `End` | Follow live output in the focused view |
 | `Ctrl+Q` | Quit |
 
-While a PTY-backed view is focused, other keys, including `Ctrl+C`, are sent to its controlling terminal. Mouse events
-remain local to prism. The optional one-line debug bar appears at the bottom and reports the most recently detected
-Crossterm key or mouse event, including its modifiers, event kind, coordinates, and state where applicable.
+While a PTY-backed view is focused, other keys, including `Ctrl+C`, are sent to its controlling terminal. Mouse-wheel
+events over a view normally scroll prism's history. If the command has enabled terminal mouse tracking, wheel events
+inside the pane are forwarded using its requested mouse encoding. If it is using the alternate screen without mouse
+tracking, each wheel tick is sent as three Up or Down keys instead. `[no-tty]` views always keep wheel scrolling local.
+Other mouse events remain local to prism. The optional one-line debug bar appears at the bottom and reports the most
+recently detected Crossterm key or mouse event, including its modifiers, event kind, coordinates, and state where
+applicable.
